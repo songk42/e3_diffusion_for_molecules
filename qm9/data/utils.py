@@ -66,6 +66,19 @@ def initialize_datasets(args, datadir, dataset, subset=None, splits=None,
             datasets[split] = {key: torch.from_numpy(
                 val) for key, val in f.items()}
 
+            # TODO temporary
+            if split == 'test':
+                datasets[split] = {}
+                for key, val in f.items():
+                    datasets[split][key] = torch.from_numpy(
+                        np.flip(val, axis=0).copy())
+                # datasets['test']['positions'] = torch.from_numpy(
+                #     np.flip(f['positions'], axis=0).copy())
+                # datasets['test']['charges'] = torch.from_numpy(
+                #     np.flip(f['charges']).copy())
+                # datasets['test']['num_atoms'] = torch.from_numpy(
+                #     np.flip(f['num_atoms']).copy())
+
     if dataset != 'qm9':
         np.random.seed(42)
         fixed_perm = np.random.permutation(len(datasets['train']['num_atoms']))

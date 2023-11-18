@@ -11,6 +11,7 @@ from qm9.property_prediction.main_qm9_prop import test
 from qm9.property_prediction import main_qm9_prop
 from qm9.sampling import sample_chain, sample, sample_sweep_conditional
 import qm9.visualizer as vis
+from qm9.property_prediction import prop_utils
 
 
 def get_classifier(dir_path='', device='cpu'):
@@ -199,10 +200,45 @@ def main_qualitative(args):
         save_and_sample_conditional(args_gen, device, model, prop_dist, dataset_info, epoch=i, id_from=0)
 
 
+def main_partial_generation(args):
+    args_gen = get_args_gen(args.generators_path)
+
+    # Careful with this -->
+    if not hasattr(args_gen, 'diffusion_noise_precision'):
+        args_gen.normalization_factor = 1e-4
+    if not hasattr(args_gen, 'normalization_factor'):
+        args_gen.normalization_factor = 1
+    if not hasattr(args_gen, 'aggregation_method'):
+        args_gen.aggregation_method = 'sum'
+
+    dataloaders = get_dataloader(args_gen)
+    property_norms = compute_mean_mad(dataloaders, args_gen.conditioning, args_gen.dataset)
+    model, nodes_dist, prop_dist, _ = get_generator(args.generators_path, dataloaders,
+                                                    args.device, args_gen, property_norms)
+
+    for i, data in enumerate(dataloaders['test']):
+        print(data.keys())
+        # model.eval()
+
+        # batch_size, n_nodes, _ = data['positions'].size()
+        # atom_positions = data['positions'].view(batch_size * n_nodes, -1).to(device, torch.float32)
+        # atom_mask = data['atom_mask'].view(batch_size * n_nodes, -1).to(device, torch.float32)
+        # edge_mask = data['edge_mask'].to(device, torch.float32)
+        # nodes = data['one_hot'].to(device, torch.float32)
+
+        # nodes = nodes.view(batch_size * n_nodes, -1)
+        # edges = prop_utils.get_adj_matrix(n_nodes, batch_size, device)
+
+        # pred = model(h0=nodes, x=atom_positions, edges=edges, edge_attr=None, node_mask=atom_mask, edge_mask=edge_mask,
+        #              n_nodes=n_nodes)
+        # print(pred)
+        break
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--exp_name', type=str, default='debug_alpha')
-    parser.add_argument('--generators_path', type=str, default='outputs/exp_cond_alpha_pretrained')
+    parser.add_argument('--generators_path', type=str, default='outputs/exp_35_conditional_nf192_9l_alpha')
     parser.add_argument('--classifiers_path', type=str, default='qm9/property_prediction/outputs/exp_class_alpha_pretrained')
     parser.add_argument('--property', type=str, default='alpha',
                         help="'alpha', 'homo', 'lumo', 'gap', 'mu', 'Cv'")
@@ -228,5 +264,7 @@ if __name__ == "__main__":
 
     if args.task == 'qualitative':
         main_qualitative(args)
+    elif args.task == 'iclr':
+        main_partial_generation(args)
     else:
         main_quantitative(args)
