@@ -1,0 +1,10 @@
+Namespace(exp_name='polynomial_2_final_0', model='egnn_dynamics', probabilistic_model='diffusion', diffusion_steps=1000, diffusion_noise_schedule='polynomial_2', diffusion_noise_precision=1e-05, diffusion_loss_type='l2', n_epochs=3000, batch_size=64, lr=0.0001, brute_force=False, actnorm=True, break_train_epoch=False, dp=True, condition_time=True, clip_grad=True, trace='hutch', n_layers=9, inv_sublayers=1, nf=256, tanh=True, attention=True, norm_constant=1, sin_embedding=False, ode_regularization=0.001, dataset='qm9', datadir='qm9/temp', filter_n_atoms=None, dequantization='argmax_variational', n_report_steps=1, wandb_usr=None, no_wandb=False, online=True, no_cuda=False, save_model=True, generate_epochs=1, num_workers=0, test_epochs=20, data_augmentation=False, conditioning=[], resume=None, start_epoch=0, ema_decay=0.9999, augment_noise=0, n_stability_samples=1000, normalize_factors=[1, 4, 10], remove_h=False, include_charges=True, visualize_every_batch=100000000.0, normalization_factor=1, cuda=True, context_node_nf=0, current_epoch=1001, aggregation_method='sum', device=device(type='cuda'))
+Entropy of n_nodes: H[N] -2.475700616836548
+alphas2 [9.99990000e-01 9.99988000e-01 9.99982000e-01 ... 2.59676966e-05
+ 1.39959211e-05 1.00039959e-05]
+gamma [-11.51291546 -11.33059532 -10.92513058 ...  10.55863126  11.17673063
+  11.51251595]
+Warning cog drift with error 0.236. Projecting the positions down.
+Warning cog drift with error 3.307. Projecting the positions down.
+Warning cog drift with error 0.198. Projecting the positions down.
+Warning cog drift with error 0.246. Projecting the positions down.

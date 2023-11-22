@@ -53,7 +53,7 @@ def analyze_and_save(
 ):
     batch_size = min(batch_size, n_samples)
     assert n_samples % batch_size == 0
-    molecules = {"one_hot": [], "x": [], "charges": [], "node_mask": []}
+    molecules = {"one_hot": [], "x": [], "species": [], "node_mask": []}
     start_time = time.time()
     current_num_samples = 0
     if dataset is None:
@@ -84,18 +84,20 @@ def analyze_and_save(
             total_mols += len(batch["num_atoms"])
         mols_considered = 0
         for batch in dataset:
-            for pos, ch, atoms in zip(
-                batch["positions"], batch["charges"], batch["num_atoms"]
+            for pos, one_hot_in, atoms in zip(
+                batch["positions"], batch["one_hot"], batch["num_atoms"]
             ):
                 for i in range(atoms):
-                    if ch[i] != 1:
+                    if one_hot_in[i][0] != 1:
                         continue
+                    one_hot = one_hot_in.to(int)
                     nodesxsample = torch.zeros(1)
                     while nodesxsample[0] < atoms:
                         nodesxsample = nodes_dist.sample(batch_size)
                     frag = {
-                        "positions": torch.vstack([pos[:i, :], pos[i + 1 :, :]])[:atoms-1, :],
-                        "charges": torch.vstack([ch[:i], ch[i + 1 :]])[:atoms-1],
+                        "positions": torch.vstack([pos[:i, :], pos[i + 1 :, :]])[:atoms-1, :].to(device),
+                        "one_hot": torch.vstack([one_hot[:i, :], one_hot[i + 1 :, :]])[:atoms-1, :].to(device),
+                        # "charges": torch.vstack([ch[:i], ch[i + 1 :]])[:atoms-1].to(device),
                         "num_atoms": atoms-1
                     }
                     one_hot, charges, x, node_mask = sample(
@@ -109,7 +111,19 @@ def analyze_and_save(
                     )
 
                     molecules["one_hot"].append(one_hot.detach().cpu())
-                    molecules["charges"].append(charges.detach().cpu())
+                    species = torch.zeros(one_hot.shape[-2])
+                    for i, row in enumerate(one_hot.detach().cpu()[0]):
+                        if row[0] == 1:
+                            species[i] = 1
+                        elif row[1] == 1:
+                            species[i] = 6
+                        elif row[2] == 1:
+                            species[i] = 7
+                        elif row[3] == 1:
+                            species[i] = 8
+                        elif row[4] == 1:
+                            species[i] = 9
+                    molecules["species"].append(species)
                     molecules["x"].append(x.detach().cpu())
                     molecules["node_mask"].append(node_mask.detach().cpu())
 
@@ -122,18 +136,17 @@ def analyze_and_save(
                     if current_num_samples % 100 == 0:
                         print(f"{current_num_samples} molecules generated at {secs_per_sample} secs/sample")
 
-                if save_to_xyz:
-                    id_from = i * batch_size
-                    qm9_visualizer.save_xyz_file(
-                        join(eval_args.model_path, "eval/analyzed_molecules/"),
-                        one_hot,
-                        charges,
-                        x,
-                        dataset_info,
-                        id_from,
-                        name="molecule",
-                        node_mask=node_mask,
-                    )
+                    if save_to_xyz:
+                        qm9_visualizer.save_xyz_file(
+                            join(eval_args.model_path, f"eval/analyzed_molecules/{split}/"),
+                            one_hot,
+                            charges,
+                            x,
+                            dataset_info,
+                            f'{mols_considered}_{i}',
+                            name="molecule",
+                            node_mask=node_mask,
+                        )
                 mols_considered += 1
                 if mols_considered == mols_to_consider:
                     break
@@ -147,6 +160,56 @@ def analyze_and_save(
     # )
 
     # return stability_dict, rdkit_metrics
+
+
+def get_atom_numbers(
+    args,
+    eval_args,
+    device,
+    generative_model,
+    nodes_dist,
+    prop_dist,
+    dataset_info,
+    n_samples=10,
+    batch_size=1,
+    save_to_xyz=False,
+    dataset=None,
+    split="train",
+    mols_to_consider=1000
+):
+    batch_size = min(batch_size, n_samples)
+    assert n_samples % batch_size == 0
+    molecules = {"charges": []}
+    start_time = time.time()
+    current_num_samples = 0
+    
+    total_mols = 0
+    for batch in dataset:
+        total_mols += len(batch["num_atoms"])
+    mols_considered = 0
+    for batch in dataset:
+        for pos, ch, atoms in zip(
+            batch["positions"], batch["charges"], batch["num_atoms"]
+        ):
+            for i in range(atoms):
+                if ch[i] != 1:
+                    continue
+                
+                molecules['charges'].append(torch.vstack([ch[:i], ch[i + 1 :]])[:atoms-1])
+
+                current_num_samples += 1
+                secs_per_sample = (time.time() - start_time) / current_num_samples
+                if current_num_samples % 100 == 0:
+                    print(f"{current_num_samples} molecules generated at {secs_per_sample} secs/sample")
+
+            mols_considered += 1
+            if mols_considered == mols_to_consider:
+                break
+        if mols_considered >= mols_to_consider:
+            break
+
+    molecules = {key: molecules[key] for key in molecules}
+    pickle.dump(molecules, open(f"generated_molecules_{split}_charges.pkl", 'wb'))
 
 
 def test(
@@ -278,53 +341,6 @@ def main():
         split=eval_args.split,
         mols_to_consider=eval_args.mols
     )
-    # print(stability_dict)
-
-    # if rdkit_metrics is not None:
-    #     rdkit_metrics = rdkit_metrics[0]
-    #     print(
-    #         "Validity %.4f, Uniqueness: %.4f, Novelty: %.4f"
-    #         % (rdkit_metrics[0], rdkit_metrics[1], rdkit_metrics[2])
-    #     )
-    # else:
-    #     print("Install rdkit roolkit to obtain Validity, Uniqueness, Novelty")
-
-    # # In GEOM-Drugs the validation partition is named 'val', not 'valid'.
-    # if args.dataset == "geom":
-    #     val_name = "val"
-    #     num_passes = 1
-    # else:
-    #     val_name = "valid"
-    #     num_passes = 5
-
-    # # Evaluate negative log-likelihood for the validation and test partitions
-    # val_nll = test(
-    #     args,
-    #     generative_model,
-    #     nodes_dist,
-    #     device,
-    #     dtype,
-    #     dataloaders[val_name],
-    #     partition="Val",
-    # )
-    # print(f"Final val nll {val_nll}")
-    # test_nll = test(
-    #     args,
-    #     generative_model,
-    #     nodes_dist,
-    #     device,
-    #     dtype,
-    #     dataloaders["test"],
-    #     partition="Test",
-    #     num_passes=num_passes,
-    # )
-    # print(f"Final test nll {test_nll}")
-
-    # print(f"Overview: val nll {val_nll} test nll {test_nll}", stability_dict)
-    # with open(join(eval_args.model_path, "eval_log.txt"), "w") as f:
-    #     print(
-    #         f"Overview: val nll {val_nll} test nll {test_nll}", stability_dict, file=f
-    #     )
 
 
 if __name__ == "__main__":
