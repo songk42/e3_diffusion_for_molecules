@@ -446,16 +446,18 @@ class EnVariationalDiffusion(torch.nn.Module):
 
         return x_pred
 
-    def fill_zt_given_x(self, net_out, zt, gamma_t, fragment):
-        x = torch.zeros_like(zt)
+    def fill_zt_given_x(self, net_out, zt, gamma_t, fragment, n_nodes, node_mask):
+        # x = torch.zeros_like(zt)
+        x = self.sample_combined_position_feature_noise(1, n_nodes, node_mask)
         x[0, :fragment['num_atoms'], :self.n_dims] = fragment['positions'][:fragment['num_atoms'], :]
-        x[0, :fragment['num_atoms'], self.n_dims:-1] = fragment['one_hot']
+        # x[0, :fragment['num_atoms'], self.n_dims:-1] = fragment['one_hot']
         sigma_t = self.sigma(gamma_t, target_tensor=net_out)
         alpha_t = self.alpha(gamma_t, target_tensor=net_out)
         eps_t = net_out
         zt_cond = x * alpha_t + sigma_t * eps_t
         zt[0, :fragment['num_atoms'], :self.n_dims] = zt_cond[0, :fragment['num_atoms'], :self.n_dims]
         # zt[0, :fragment['num_atoms'], self.n_dims:-1] = zt_cond[0, :fragment['num_atoms'], self.n_dims:-1]
+        # print(zt[0, :fragment['num_atoms'], self.n_dims:-1])
         # print(self.compute_x_pred(net_out, zt, gamma_t))
         return zt
 
@@ -831,7 +833,7 @@ class EnVariationalDiffusion(torch.nn.Module):
             z = self.sample_p_zs_given_zt(s_array, t_array, z, node_mask, edge_mask, context, fix_noise=fix_noise)
             net_out = self.phi(z, t_array, node_mask, edge_mask, context)
             gamma_s = self.gamma(s_array)
-            z = self.fill_zt_given_x(net_out, z, gamma_s, fragment)
+            z = self.fill_zt_given_x(net_out, z, gamma_s, fragment, n_nodes, node_mask)
 
         # Finally sample p(x, h | z_0).
         x, h = self.sample_p_xh_given_z0(z, node_mask, edge_mask, context, fix_noise=fix_noise)
