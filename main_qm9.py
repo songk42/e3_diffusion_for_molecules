@@ -115,6 +115,8 @@ parser.add_argument('--normalization_factor', type=float, default=1,
                     help="Normalize the sum aggregation of EGNN")
 parser.add_argument('--aggregation_method', type=str, default='sum',
                     help='"sum" or "mean"')
+parser.add_argument('--nn_cutoff', type=float, default=None,
+                    help="Radial cutoff (in Angstrom) for message passing. The default None value means no cutoff will be applied.")
 args = parser.parse_args()
 
 dataset_info = get_dataset_info(args.dataset, args.remove_h)
