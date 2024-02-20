@@ -93,9 +93,17 @@ class PreprocessQM9:
         diag_mask = ~torch.eye(edge_mask.size(1), dtype=torch.bool).unsqueeze(0)
         edge_mask *= diag_mask
 
+        # Filter edges based on radial cutoff.
+        if self.nn_cutoff is not None:
+            atom_positions = batch['positions']
+            print("before", atom_positions.shape, edge_mask.shape)
+            edge_mask *= (torch.norm(atom_positions.unsqueeze(1) - atom_positions.unsqueeze(2), dim=-1) < self.nn_cutoff)
+            print("after", edge_mask.shape)
+            raise ValueError("stop")
+
         #edge_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
         batch['edge_mask'] = edge_mask.view(batch_size * n_nodes * n_nodes, 1)
-
+    
         if self.load_charges:
             batch['charges'] = batch['charges'].unsqueeze(2)
         else:

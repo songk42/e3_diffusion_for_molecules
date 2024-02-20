@@ -15,6 +15,8 @@ batch_size: 128
 lr: 0.0002
 brute_force: False
 
+nn_cutoff: None  # Radial cutoff (in Angstrom) for message passing. The default None value means no cutoff will be applied.
+
 break_train_epoch: False
 dp: True
 condition_time: True
