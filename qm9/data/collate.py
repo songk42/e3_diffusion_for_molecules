@@ -56,8 +56,9 @@ def drop_zeros(props, to_keep):
 
 
 class PreprocessQM9:
-    def __init__(self, load_charges=True):
+    def __init__(self, load_charges=True, nn_cutoff=None):
         self.load_charges = load_charges
+        self.nn_cutoff = nn_cutoff
 
     def add_trick(self, trick):
         self.tricks.append(trick)
@@ -96,10 +97,14 @@ class PreprocessQM9:
         # Filter edges based on radial cutoff.
         if self.nn_cutoff is not None:
             atom_positions = batch['positions']
-            print("before", atom_positions.shape, edge_mask.shape)
-            edge_mask *= (torch.norm(atom_positions.unsqueeze(1) - atom_positions.unsqueeze(2), dim=-1) < self.nn_cutoff)
-            print("after", edge_mask.shape)
-            raise ValueError("stop")
+            num_batches, num_atoms, _ = atom_positions.shape
+            assert atom_positions.shape == (num_batches, num_atoms, 3)
+
+            distance_matrix = torch.norm(atom_positions.unsqueeze(1) - atom_positions.unsqueeze(2), dim=-1)
+            assert distance_matrix.shape == (num_batches, num_atoms, num_atoms)
+
+            edge_mask *= (distance_matrix <= self.nn_cutoff)
+            assert edge_mask.shape == (num_batches, num_atoms, num_atoms)
 
         #edge_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
         batch['edge_mask'] = edge_mask.view(batch_size * n_nodes * n_nodes, 1)
