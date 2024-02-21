@@ -28,7 +28,7 @@ def retrieve_dataloaders(cfg):
             datasets = filter_atoms(datasets, filter_n_atoms)
 
         # Construct PyTorch dataloaders from datasets
-        preprocess = PreprocessQM9(load_charges=cfg.include_charges, nn_cutoff=cfg.nn_cutoff)
+        preprocess = PreprocessQM9(load_charges=cfg.include_charges)
         dataloaders = {split: DataLoader(dataset,
                                          batch_size=batch_size,
                                          shuffle=args.shuffle if (split == 'train') else False,
