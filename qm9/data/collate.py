@@ -56,9 +56,8 @@ def drop_zeros(props, to_keep):
 
 
 class PreprocessQM9:
-    def __init__(self, load_charges=True, nn_cutoff=None):
+    def __init__(self, load_charges=True):
         self.load_charges = load_charges
-        self.nn_cutoff = nn_cutoff
 
     def add_trick(self, trick):
         self.tricks.append(trick)
@@ -89,26 +88,23 @@ class PreprocessQM9:
         #Obtain edges
         batch_size, n_nodes = atom_mask.size()
         edge_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
-
+        
+        # Compute diameters of each graph.
+        # atom_positions = batch['positions']
+        # atom_positions = atom_positions.view(batch_size, n_nodes, 3)
+        # atom_positions = atom_positions.view(batch_size, n_nodes, 1, 3)
+        # atom_positions = atom_positions.expand(-1, -1, n_nodes, -1)
+        # atom_positions_t = atom_positions.transpose(1, 2)
+        # distances = torch.norm(atom_positions - atom_positions_t, dim=-1)
+        # max_distance = torch.amax(distances, dim=(1, 2))
+        # raise ValueError("Diameter: ", max_distance)
+        
         #mask diagonal
         diag_mask = ~torch.eye(edge_mask.size(1), dtype=torch.bool).unsqueeze(0)
         edge_mask *= diag_mask
 
-        # Filter edges based on radial cutoff.
-        if self.nn_cutoff is not None:
-            atom_positions = batch['positions']
-            num_batches, num_atoms, _ = atom_positions.shape
-            assert atom_positions.shape == (num_batches, num_atoms, 3)
+        batch['edge_mask'] = edge_mask
 
-            distance_matrix = torch.norm(atom_positions.unsqueeze(1) - atom_positions.unsqueeze(2), dim=-1)
-            assert distance_matrix.shape == (num_batches, num_atoms, num_atoms)
-
-            edge_mask *= (distance_matrix <= self.nn_cutoff)
-            assert edge_mask.shape == (num_batches, num_atoms, num_atoms)
-
-        #edge_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
-        batch['edge_mask'] = edge_mask.view(batch_size * n_nodes * n_nodes, 1)
-    
         if self.load_charges:
             batch['charges'] = batch['charges'].unsqueeze(2)
         else:
