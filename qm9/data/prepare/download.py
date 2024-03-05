@@ -3,6 +3,7 @@ import os
 
 from qm9.data.prepare.md17 import download_dataset_md17
 from qm9.data.prepare.qm9 import download_dataset_qm9
+from qm9.data.prepare.tmqm import download_dataset_tmqm
 
 
 def prepare_dataset(datadir, dataset, subset=None, splits=None, cleanup=True, force_download=False):
@@ -73,8 +74,10 @@ def prepare_dataset(datadir, dataset, subset=None, splits=None, cleanup=True, fo
         elif dataset.lower().startswith('md17'):
             download_dataset_md17(datadir, dataset, subset,
                                   splits, cleanup=cleanup)
+        elif dataset.lower().startswith('tmqm'):
+            download_dataset_tmqm(datadir, dataset, splits, cleanup=cleanup)
         else:
             raise ValueError(
-                'Incorrect choice of dataset! Must chose qm9/md17!')
+                'Incorrect choice of dataset! Must chose qm9/md17/tmqm!')
 
     return datafiles

@@ -73,12 +73,10 @@ parser.add_argument('--sin_embedding', type=eval, default=False,
                     help='whether using or not the sin embedding')
 # <-- EGNN args
 parser.add_argument('--ode_regularization', type=float, default=1e-3)
-parser.add_argument('--dataset', type=str, default='qm9',
-                    help='qm9 | qm9_second_half (train only on the last 50K samples of the training dataset)')
-parser.add_argument('--datadir', type=str, default='qm9/temp',
+parser.add_argument('--datadir', type=str, default='tmqm/temp',
                     help='qm9 directory')
 parser.add_argument('--filter_n_atoms', type=int, default=None,
-                    help='When set to an integer value, QM9 will only contain molecules of that amount of atoms')
+                    help='When set to an integer value, TMQM will only contain molecules of that amount of atoms')
 parser.add_argument('--dequantization', type=str, default='argmax_variational',
                     help='uniform | variational | argmax_variational | deterministic')
 parser.add_argument('--n_report_steps', type=int, default=1)

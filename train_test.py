@@ -10,6 +10,8 @@ import qm9.utils as qm9utils
 from qm9 import losses
 import time
 import torch
+import ase
+import ase.io
 
 
 def train_epoch(args, loader, epoch, model, model_dp, model_ema, ema, device, dtype, property_norms, optim,
@@ -173,12 +175,19 @@ def sample_different_sizes_and_save(model, nodes_dist, args, device, dataset_inf
                           batch_size * counter, name='molecule')
 
 
+def undo_one_hot(arr):
+    atomic_numbers = np.array([1, 6, 7, 8, 9])
+    return atomic_numbers[arr.argmax(axis=-1)]
+
+
 def analyze_and_save(epoch, model_sample, nodes_dist, args, device, dataset_info, prop_dist,
-                     n_samples=1000, batch_size=100):
+                     n_samples=1000, batch_size=100, save_to_ase=False):
     print(f'Analyzing molecule stability at epoch {epoch}...')
     batch_size = min(batch_size, n_samples)
     assert n_samples % batch_size == 0
     molecules = {'one_hot': [], 'x': [], 'node_mask': []}
+    if save_to_ase:
+        molecules_ase = []
     for i in range(int(n_samples/batch_size)):
         nodesxsample = nodes_dist.sample(batch_size)
         one_hot, charges, x, node_mask = sample(args, device, model_sample, dataset_info, prop_dist,
@@ -188,8 +197,18 @@ def analyze_and_save(epoch, model_sample, nodes_dist, args, device, dataset_info
         molecules['x'].append(x.detach().cpu())
         molecules['node_mask'].append(node_mask.detach().cpu())
 
+        if save_to_ase:
+            for j in range(batch_size):
+                mol = ase.Atoms(numbers=undo_one_hot(molecules['one_hot'][-1][j].numpy()),
+                                positions=molecules['x'][-1][j].numpy())
+                molecules_ase.append(mol)
+
     molecules = {key: torch.cat(molecules[key], dim=0) for key in molecules}
     validity_dict, rdkit_tuple = analyze_stability_for_molecules(molecules, dataset_info)
+
+    if save_to_ase:
+        for i, mol in enumerate(molecules_ase):
+            mol.write(f'generated_molecules/{args.exp_name}/epoch_{epoch}/molecule_{i}.xyz')
 
     wandb.log(validity_dict)
     if rdkit_tuple is not None:

@@ -57,7 +57,7 @@ def initialize_datasets(args, datadir, dataset, subset=None, splits=None,
 
     # Download and process dataset. Returns datafiles.
     datafiles = prepare_dataset(
-        datadir, 'qm9', subset, splits, force_download=force_download)
+        datadir, dataset, subset, splits, force_download=force_download)
 
     # Load downloaded/processed datasets
     datasets = {}
@@ -66,19 +66,6 @@ def initialize_datasets(args, datadir, dataset, subset=None, splits=None,
             datasets[split] = {key: torch.from_numpy(
                 val) for key, val in f.items()}
 
-            # TODO temporary
-            if split == 'test':
-                datasets[split] = {}
-                for key, val in f.items():
-                    datasets[split][key] = torch.from_numpy(
-                        np.flip(val, axis=0).copy())
-                # datasets['test']['positions'] = torch.from_numpy(
-                #     np.flip(f['positions'], axis=0).copy())
-                # datasets['test']['charges'] = torch.from_numpy(
-                #     np.flip(f['charges']).copy())
-                # datasets['test']['num_atoms'] = torch.from_numpy(
-                #     np.flip(f['num_atoms']).copy())
-
     if dataset != 'qm9':
         np.random.seed(42)
         fixed_perm = np.random.permutation(len(datasets['train']['num_atoms']))
@@ -86,7 +73,7 @@ def initialize_datasets(args, datadir, dataset, subset=None, splits=None,
             sliced_perm = fixed_perm[len(datasets['train']['num_atoms'])//2:]
         elif dataset == 'qm9_first_half':
             sliced_perm = fixed_perm[0:len(datasets['train']['num_atoms']) // 2]
-        else:
+        elif dataset != 'tmqm':
             raise Exception('Wrong dataset name')
         for key in datasets['train']:
             datasets['train'][key] = datasets['train'][key][sliced_perm]

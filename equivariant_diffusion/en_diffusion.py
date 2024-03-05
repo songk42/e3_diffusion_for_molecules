@@ -446,21 +446,6 @@ class EnVariationalDiffusion(torch.nn.Module):
 
         return x_pred
 
-    def fill_zt_given_x(self, net_out, zt, gamma_t, fragment, n_nodes, node_mask):
-        # x = torch.zeros_like(zt)
-        x = self.sample_combined_position_feature_noise(1, n_nodes, node_mask)
-        x[0, :fragment['num_atoms'], :self.n_dims] = fragment['positions'][:fragment['num_atoms'], :]
-        # x[0, :fragment['num_atoms'], self.n_dims:-1] = fragment['one_hot']
-        sigma_t = self.sigma(gamma_t, target_tensor=net_out)
-        alpha_t = self.alpha(gamma_t, target_tensor=net_out)
-        eps_t = net_out
-        zt_cond = x * alpha_t + sigma_t * eps_t
-        zt[0, :fragment['num_atoms'], :self.n_dims] = zt_cond[0, :fragment['num_atoms'], :self.n_dims]
-        # zt[0, :fragment['num_atoms'], self.n_dims:-1] = zt_cond[0, :fragment['num_atoms'], self.n_dims:-1]
-        # print(zt[0, :fragment['num_atoms'], self.n_dims:-1])
-        # print(self.compute_x_pred(net_out, zt, gamma_t))
-        return zt
-
     def compute_error(self, net_out, gamma_t, eps):
         """Computes error, i.e. the most likely prediction of x."""
         eps_t = net_out
@@ -498,6 +483,7 @@ class EnVariationalDiffusion(torch.nn.Module):
         # Compute mu for p(zs | zt).
         mu_x = self.compute_x_pred(net_out, z0, gamma_0)
         xh = self.sample_normal(mu=mu_x, sigma=sigma_x, node_mask=node_mask, fix_noise=fix_noise)
+
         x = xh[:, :, :self.n_dims]
 
         h_int = z0[:, :, -1:] if self.include_charges else torch.zeros(0).to(z0.device)
@@ -740,7 +726,7 @@ class EnVariationalDiffusion(torch.nn.Module):
         eps_t = self.phi(zt, t, node_mask, edge_mask, context)
 
         # Compute mu for p(zs | zt).
-        # diffusion_utils.assert_mean_zero_with_mask(zt[:, :, :self.n_dims], node_mask)
+        diffusion_utils.assert_mean_zero_with_mask(zt[:, :, :self.n_dims], node_mask)
         diffusion_utils.assert_mean_zero_with_mask(eps_t[:, :, :self.n_dims], node_mask)
         mu = zt / alpha_t_given_s - (sigma2_t_given_s / alpha_t_given_s / sigma_t) * eps_t
 
@@ -803,52 +789,6 @@ class EnVariationalDiffusion(torch.nn.Module):
             print(f'Warning cog drift with error {max_cog:.3f}. Projecting '
                   f'the positions down.')
             x = diffusion_utils.remove_mean_with_mask(x, node_mask)
-
-        return x, h
-
-    @torch.no_grad()
-    def sample_fragment(self, n_samples, n_nodes, node_mask, edge_mask, context, fragment=None, fix_noise=False):
-        """
-        Draw samples from the generative model, given a starting fragment.
-        """
-        if fix_noise:
-            # Noise is broadcasted over the batch axis, useful for visualizations.
-            z = self.sample_combined_position_feature_noise(1, n_nodes, node_mask)
-        else:
-            z = self.sample_combined_position_feature_noise(n_samples, n_nodes, node_mask)
-        z[0, :fragment['num_atoms'], :self.n_dims] = fragment['positions'][:fragment['num_atoms'], :]
-        z[0, :fragment['num_atoms'], self.n_dims:-1] = fragment['one_hot']
-        # z[0, :fragment['num_atoms'], -1:] = fragment['charges']
-        # node_mask[:, :fragment['num_atoms']] = 1
-        # diffusion_utils.assert_mean_zero_with_mask(z[:, :, :self.n_dims], node_mask)
-        # node_mask[:, :fragment['num_atoms']] = 0
-
-        # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
-        for s in reversed(range(0, self.T)):
-            s_array = torch.full((n_samples, 1), fill_value=s, device=z.device)
-            t_array = s_array + 1
-            s_array = s_array / self.T
-            t_array = t_array / self.T
-
-            z = self.sample_p_zs_given_zt(s_array, t_array, z, node_mask, edge_mask, context, fix_noise=fix_noise)
-            net_out = self.phi(z, t_array, node_mask, edge_mask, context)
-            gamma_s = self.gamma(s_array)
-            z = self.fill_zt_given_x(net_out, z, gamma_s, fragment, n_nodes, node_mask)
-
-        # Finally sample p(x, h | z_0).
-        x, h = self.sample_p_xh_given_z0(z, node_mask, edge_mask, context, fix_noise=fix_noise)
-
-        diffusion_utils.assert_mean_zero_with_mask(x, node_mask)
-
-        max_cog = torch.sum(x, dim=1, keepdim=True).abs().max().item()
-        if max_cog > 5e-2:
-            print(f'Warning cog drift with error {max_cog:.3f}. Projecting '
-                  f'the positions down.')
-            x = diffusion_utils.remove_mean_with_mask(x, node_mask)
-        
-        if fragment is not None:
-            x[:, :fragment['num_atoms'], :] = fragment['positions']
-            h['categorical'][:, :fragment['num_atoms'], :] = fragment['one_hot']
 
         return x, h
 

@@ -109,7 +109,7 @@ def sample_chain(args, device, flow, n_tries, dataset_info, prop_dist=None):
 
 def sample(args, device, generative_model, dataset_info,
            prop_dist=None, nodesxsample=torch.tensor([10]), context=None,
-           fix_noise=False, fragment=None):
+           fix_noise=False):
     max_n_nodes = dataset_info['max_n_nodes']  # this is the maximum node_size in QM9
 
     assert int(torch.max(nodesxsample)) <= max_n_nodes
@@ -136,20 +136,17 @@ def sample(args, device, generative_model, dataset_info,
         context = None
 
     if args.probabilistic_model == 'diffusion':
-        if fragment is None:
-            x, h = generative_model.sample(batch_size, max_n_nodes, node_mask, edge_mask, context, fix_noise=fix_noise)
-        else:
-            x, h = generative_model.sample_fragment(batch_size, max_n_nodes, node_mask, edge_mask, context, fragment=fragment, fix_noise=fix_noise)
+        x, h = generative_model.sample(batch_size, max_n_nodes, node_mask, edge_mask, context, fix_noise=fix_noise)
 
-        # assert_correctly_masked(x, node_mask)
-        # assert_mean_zero_with_mask(x, node_mask)
+        assert_correctly_masked(x, node_mask)
+        assert_mean_zero_with_mask(x, node_mask)
 
         one_hot = h['categorical']
         charges = h['integer']
 
-        # assert_correctly_masked(one_hot.float(), node_mask)
-        # if args.include_charges:
-        #     assert_correctly_masked(charges.float(), node_mask)
+        assert_correctly_masked(one_hot.float(), node_mask)
+        if args.include_charges:
+            assert_correctly_masked(charges.float(), node_mask)
 
     else:
         raise ValueError(args.probabilistic_model)
