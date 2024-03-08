@@ -4,7 +4,12 @@ import torch
 import tarfile
 from torch.nn.utils.rnn import pad_sequence
 
-charge_dict = {'H': 1, 'C': 6, 'N': 7, 'O': 8, 'F': 9}
+charge_dict = {'H': 1, 'B': 5, 'C': 6, 'N': 7, 'O': 8, 'F': 9, 'Si': 14, 'P': 15, 'S': 16, 
+               'Cl': 17, 'Sc': 21, 'Ti': 22, 'V': 23, 'Cr': 24, 'Mn': 25, 'Fe': 26, 'Co': 27, 
+               'Ni': 28, 'Cu': 29, 'Zn': 30, 'As': 33, 'Se': 34, 'Br': 35, 'Y': 39, 'Zr': 40, 
+               'Nb': 41, 'Mo': 42, 'Tc': 43, 'Ru': 44, 'Rh': 45, 'Pd': 46, 'Ag': 47, 'Cd': 48, 
+               'I': 53, 'La': 57, 'Hf': 72, 'Ta': 73, 'W': 74, 'Re': 75, 'Os': 76, 'Ir': 77, 
+               'Pt': 78, 'Au': 79, 'Hg': 80}
 
 
 def split_dataset(data, split_idxs):
@@ -33,7 +38,7 @@ def split_dataset(data, split_idxs):
 # def save_database()
 
 
-def process_xyz_files(data, process_file_fn, file_ext=None, file_idx_list=None, stack=True):
+def process_xyz_files(data, process_file_fn, file_ext=None, file_idx_list=None, stack=True, prop_df=None):
     """
     Take a set of datafiles and apply a predefined data processing script to each
     one. Data can be stored in a directory, tarfile, or zipfile. An optional
@@ -57,17 +62,17 @@ def process_xyz_files(data, process_file_fn, file_ext=None, file_idx_list=None, 
         ?????
     """
     logging.info('Processing data file: {}'.format(data))
-    if tarfile.is_tarfile(data):
-        tardata = tarfile.open(data, 'r')
-        files = tardata.getmembers()
-
-        readfile = lambda data_pt: tardata.extractfile(data_pt)
-
-    elif os.is_dir(data):
+    if os.path.isdir(data):
         files = os.listdir(data)
         files = [os.path.join(data, file) for file in files]
 
         readfile = lambda data_pt: open(data_pt, 'r')
+
+    elif tarfile.is_tarfile(data):
+        tardata = tarfile.open(data, 'r')
+        files = tardata.getmembers()
+
+        readfile = lambda data_pt: tardata.extractfile(data_pt)
 
     else:
         raise ValueError('Can only read from directory or tarball archive!')
@@ -85,9 +90,12 @@ def process_xyz_files(data, process_file_fn, file_ext=None, file_idx_list=None, 
 
     molecules = []
 
-    for file in files:
+    for i, file in enumerate(files):
         with readfile(file) as openfile:
-            molecules.append(process_file_fn(openfile))
+            if 'tmqm' in data:
+                molecules.append(process_file_fn(openfile, prop_df.iloc[i]))
+            else:
+                molecules.append(process_file_fn(openfile))
 
     # Check that all molecules have the same set of items in their dictionary:
     props = molecules[0].keys()
@@ -101,6 +109,46 @@ def process_xyz_files(data, process_file_fn, file_ext=None, file_idx_list=None, 
         molecules = {key: pad_sequence(val, batch_first=True) if val[0].dim() > 0 else torch.stack(val) for key, val in molecules.items()}
 
     return molecules
+
+
+def process_xyz_tmqm(datafile, prop_df):
+    """
+    Read xyz file and return a molecular dict with number of atoms, energy, forces, coordinates and atom-type for the gdb9 dataset.
+
+    Parameters
+    ----------
+    datafile : python file object
+        File object containing the molecular data in the TMQM dataset.
+    prop_df: pandas dataframe
+        Dataframe containing molecular properties of structures in the TMQM dataset.
+
+    Returns
+    -------
+    molecule : dict
+        Dictionary containing the molecular properties of the associated file object.
+
+    Notes
+    -----
+    TODO : Replace breakpoint with a more informative failure?
+    """
+    xyz_lines = [line for line in datafile.readlines()]
+
+    num_atoms = int(xyz_lines[0])
+    mol_xyz = xyz_lines[2:]
+
+    atom_charges, atom_positions = [], []
+    for line in mol_xyz:
+        atom, posx, posy, posz = line.replace('*^', 'e').split()
+        atom_charges.append(charge_dict[atom])
+        atom_positions.append([float(posx), float(posy), float(posz)])
+
+    mol_props = prop_df.to_dict()
+
+    molecule = {'num_atoms': num_atoms, 'charges': atom_charges, 'positions': atom_positions}
+    molecule.update(mol_props)
+    molecule = {key: torch.tensor(val) for key, val in molecule.items()}
+
+    return molecule
 
 
 def process_xyz_md17(datafile):

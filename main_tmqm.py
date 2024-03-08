@@ -73,6 +73,8 @@ parser.add_argument('--sin_embedding', type=eval, default=False,
                     help='whether using or not the sin embedding')
 # <-- EGNN args
 parser.add_argument('--ode_regularization', type=float, default=1e-3)
+parser.add_argument('--dataset', type=str, default='tmqm',
+                    help='dataset (tmqm)')
 parser.add_argument('--datadir', type=str, default='tmqm/temp',
                     help='qm9 directory')
 parser.add_argument('--filter_n_atoms', type=int, default=None,
@@ -173,6 +175,7 @@ wandb.save('*.txt')
 dataloaders, charge_scale = dataset.retrieve_dataloaders(args)
 
 data_dummy = next(iter(dataloaders['train']))
+print(data_dummy)
 
 
 if len(args.conditioning) > 0:

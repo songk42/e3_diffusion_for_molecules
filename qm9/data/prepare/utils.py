@@ -55,8 +55,6 @@ def clone_url(url: str, root: str) -> str:
     logging.info(f"Cloning {url} to {repo_path}")
     Repo.clone_from(url, repo_path)
 
-    return success
-
 
 # Check if a string can be converted to an int, without throwing an error.
 def is_int(str):

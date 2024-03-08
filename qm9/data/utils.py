@@ -9,7 +9,7 @@ from qm9.data.dataset_class import ProcessedDataset
 from qm9.data.prepare import prepare_dataset
 
 
-def initialize_datasets(args, datadir, dataset, subset=None, splits=None,
+def initialize_datasets(args, datadir, dataset, subset=None,
                         force_download=False, subtract_thermo=False,
                         remove_h=False):
     """
@@ -26,8 +26,6 @@ def initialize_datasets(args, datadir, dataset, subset=None, splits=None,
     subset : str, optional
         Which subset of a dataset to use.  Action is dependent on the dataset given.
         Must be specified if the dataset has subsets (i.e. MD17).  Otherwise ignored (i.e. GDB9).
-    splits : str, optional
-        TODO: DELETE THIS ENTRY
     force_download : bool, optional
         If true, forces a fresh download of the dataset.
     subtract_thermo : bool, optional
@@ -49,7 +47,6 @@ def initialize_datasets(args, datadir, dataset, subset=None, splits=None,
 
     Notes
     -----
-    TODO: Delete the splits argument.
     """
     # Set the number of points based upon the arguments
     num_pts = {'train': args.num_train,
@@ -57,7 +54,7 @@ def initialize_datasets(args, datadir, dataset, subset=None, splits=None,
 
     # Download and process dataset. Returns datafiles.
     datafiles = prepare_dataset(
-        datadir, dataset, subset, splits, force_download=force_download)
+        datadir, dataset, subset, force_download=force_download)
 
     # Load downloaded/processed datasets
     datasets = {}
@@ -73,7 +70,9 @@ def initialize_datasets(args, datadir, dataset, subset=None, splits=None,
             sliced_perm = fixed_perm[len(datasets['train']['num_atoms'])//2:]
         elif dataset == 'qm9_first_half':
             sliced_perm = fixed_perm[0:len(datasets['train']['num_atoms']) // 2]
-        elif dataset != 'tmqm':
+        elif dataset == 'tmqm':
+            sliced_perm = fixed_perm
+        else:
             raise Exception('Wrong dataset name')
         for key in datasets['train']:
             datasets['train'][key] = datasets['train'][key][sliced_perm]

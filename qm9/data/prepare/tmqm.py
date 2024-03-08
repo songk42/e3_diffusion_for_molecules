@@ -3,12 +3,13 @@ import urllib.request
 
 import ase
 import numpy as np
+import pandas as pd
 import torch
 from sh import gunzip
 
 import logging, os, urllib
 
-from qm9.data.prepare.process import process_xyz_files, process_xyz_gdb9
+from qm9.data.prepare.process import process_xyz_files, process_xyz_tmqm
 from qm9.data.prepare.utils import download_data, clone_url, is_int, cleanup_file
 
 tmqm_url = "https://github.com/bbskjelstad/tmqm.git"
@@ -21,16 +22,22 @@ def download_dataset_tmqm(datadir, dataname, splits=None, calculate_thermo=True,
     # Define directory for which data will be output.
     tmqmdir = join(*[datadir, dataname])
 
+    if os.path.exists(tmqmdir):
+        logging.info('Using pre-downloaded data')
+        return
+
     # Important to avoid a race condition
     os.makedirs(tmqmdir, exist_ok=True)
 
     logging.info('Downloading and processing TMQM dataset. Output will be in directory: {}.'.format(tmqmdir))
 
-    tmqm_repo_dir = os.path.join(tmqmdir, 'tmqm')
-    tmqm_xyzs_path = os.path.join(tmqmdir, "xyz")
-    tmqm_data_dir = os.path.join(tmqm_repo_dir, 'data')
+    tmqm_repo_dir = tmqmdir
+    tmqm_data_dir = os.path.join(tmqm_repo_dir, 'tmqm/data')
 
     clone_url(tmqm_url, tmqm_repo_dir)
+    tmqm_xyzs_path = os.path.join(tmqmdir, "tmqm/xyz")
+    if not os.path.exists(tmqm_xyzs_path):
+        os.makedirs(tmqm_xyzs_path)
     for i in range(1, 3):
         gz_path = os.path.join(tmqm_data_dir, f"tmQM_X{i}.xyz.gz")
         logging.info(f"Unzipping {gz_path}...")
@@ -49,18 +56,22 @@ def download_dataset_tmqm(datadir, dataname, splits=None, calculate_thermo=True,
 
     # Process GDB9 dataset, and return dictionary of splits
     tmqm_data = {}
+    tmqm_props = pd.read_csv(os.path.join(tmqm_data_dir, 'tmQM_y.csv'), sep=';')
+    tmqm_props.drop(columns='CSD_code', inplace=True)
+    if splits is None:
+        splits = {'train': np.arange(75000), 'valid': np.arange(75000, 80000), 'test': np.arange(80000, 86665)}
     for split, split_idx in splits.items():
         tmqm_data[split] = process_xyz_files(
-            tmqm_xyzs_path, process_xyz_gdb9, file_idx_list=split_idx, stack=True)
+            tmqm_xyzs_path, process_xyz_tmqm, file_idx_list=split_idx, stack=True, prop_df=tmqm_props)
 
-    # Subtract thermochemical energy if desired.
-    if calculate_thermo:
-        # Download thermochemical energy from GDB9 dataset, and then process it into a dictionary
-        therm_energy = get_thermo_dict(tmqm_data_dir, cleanup)
+    # # Subtract thermochemical energy if desired.
+    # if calculate_thermo:
+    #     # Download thermochemical energy from GDB9 dataset, and then process it into a dictionary
+    #     therm_energy = get_thermo_dict(tmqm_data_dir, cleanup)
 
-        # For each of train/validation/test split, add the thermochemical energy
-        for split_idx, split_data in tmqm_data.items():
-            tmqm_data[split_idx] = add_thermo_targets(split_data, therm_energy)
+    #     # For each of train/validation/test split, add the thermochemical energy
+    #     for split_idx, split_data in tmqm_data.items():
+    #         tmqm_data[split_idx] = add_thermo_targets(split_data, therm_energy)
 
     # Save processed GDB9 data into train/validation/test splits
     logging.info('Saving processed data:')
@@ -149,7 +160,7 @@ def get_unique_charges(charges):
     Get count of each charge for each molecule.
     """
     # Create a dictionary of charges
-    charge_counts = {z: np.zeros(len(charges), dtype=np.int)
+    charge_counts = {z: np.zeros(len(charges), dtype=int)
                      for z in np.unique(charges)}
     print(charge_counts.keys())
 
