@@ -185,16 +185,12 @@ class PredefinedNoiseSchedule(torch.nn.Module):
         else:
             raise ValueError(noise_schedule)
 
-        print('alphas2', alphas2)
-
         sigmas2 = 1 - alphas2
 
         log_alphas2 = np.log(alphas2)
         log_sigmas2 = np.log(sigmas2)
 
         log_alphas2_to_sigmas2 = log_alphas2 - log_sigmas2
-
-        print('gamma', -log_alphas2_to_sigmas2)
 
         self.gamma = torch.nn.Parameter(
             torch.from_numpy(-log_alphas2_to_sigmas2).float(),
@@ -419,6 +415,8 @@ class EnVariationalDiffusion(torch.nn.Module):
 
         # Compute standard deviations (only batch axis for x-part, inflated for h-part).
         sigma_T_x = self.sigma(gamma_T, mu_T_x).squeeze()  # Remove inflate, only keep batch dimension for x-part.
+        if len(sigma_T_x.shape) == 0:
+            sigma_T_x = sigma_T_x.unsqueeze(0)
         sigma_T_h = self.sigma(gamma_T, mu_T_h)
 
         # Compute KL for h-part.

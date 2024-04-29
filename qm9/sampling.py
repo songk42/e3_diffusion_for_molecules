@@ -57,6 +57,8 @@ def sample_chain(args, device, flow, n_tries, dataset_info, prop_dist=None):
         n_nodes = 19
     elif args.dataset == 'geom':
         n_nodes = 44
+    elif args.dataset == 'tmqm':
+        n_nodes = 50
     else:
         raise ValueError()
 

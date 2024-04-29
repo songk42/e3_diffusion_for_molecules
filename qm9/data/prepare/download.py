@@ -75,7 +75,7 @@ def prepare_dataset(datadir, dataset, subset=None, splits=None, cleanup=True, fo
             download_dataset_md17(datadir, dataset, subset,
                                   splits, cleanup=cleanup)
         elif dataset.lower().startswith('tmqm'):
-            download_dataset_tmqm(datadir, dataset, splits, cleanup=cleanup)
+            download_dataset_tmqm(datadir, dataset, splits, cleanup=cleanup, calculate_thermo=False)
         else:
             raise ValueError(
                 'Incorrect choice of dataset! Must chose qm9/md17/tmqm!')

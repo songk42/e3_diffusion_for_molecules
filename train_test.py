@@ -182,38 +182,39 @@ def undo_one_hot(arr):
 
 def analyze_and_save(epoch, model_sample, nodes_dist, args, device, dataset_info, prop_dist,
                      n_samples=1000, batch_size=100, save_to_ase=False):
-    print(f'Analyzing molecule stability at epoch {epoch}...')
-    batch_size = min(batch_size, n_samples)
-    assert n_samples % batch_size == 0
-    molecules = {'one_hot': [], 'x': [], 'node_mask': []}
-    if save_to_ase:
-        molecules_ase = []
-    for i in range(int(n_samples/batch_size)):
-        nodesxsample = nodes_dist.sample(batch_size)
-        one_hot, charges, x, node_mask = sample(args, device, model_sample, dataset_info, prop_dist,
-                                                nodesxsample=nodesxsample)
+    pass
+    # print(f'Analyzing molecule stability at epoch {epoch}...')
+    # batch_size = min(batch_size, n_samples)
+    # assert n_samples % batch_size == 0
+    # molecules = {'one_hot': [], 'x': [], 'node_mask': []}
+    # if save_to_ase:
+    #     molecules_ase = []
+    # for i in range(int(n_samples/batch_size)):
+    #     nodesxsample = nodes_dist.sample(batch_size)
+    #     one_hot, charges, x, node_mask = sample(args, device, model_sample, dataset_info, prop_dist,
+    #                                             nodesxsample=nodesxsample)
 
-        molecules['one_hot'].append(one_hot.detach().cpu())
-        molecules['x'].append(x.detach().cpu())
-        molecules['node_mask'].append(node_mask.detach().cpu())
+    #     molecules['one_hot'].append(one_hot.detach().cpu())
+    #     molecules['x'].append(x.detach().cpu())
+    #     molecules['node_mask'].append(node_mask.detach().cpu())
 
-        if save_to_ase:
-            for j in range(batch_size):
-                mol = ase.Atoms(numbers=undo_one_hot(molecules['one_hot'][-1][j].numpy()),
-                                positions=molecules['x'][-1][j].numpy())
-                molecules_ase.append(mol)
+    #     if save_to_ase:
+    #         for j in range(batch_size):
+    #             mol = ase.Atoms(numbers=undo_one_hot(molecules['one_hot'][-1][j].numpy()),
+    #                             positions=molecules['x'][-1][j].numpy())
+    #             molecules_ase.append(mol)
 
-    molecules = {key: torch.cat(molecules[key], dim=0) for key in molecules}
-    validity_dict, rdkit_tuple = analyze_stability_for_molecules(molecules, dataset_info)
+    # molecules = {key: torch.cat(molecules[key], dim=0) for key in molecules}
+    # validity_dict, rdkit_tuple = analyze_stability_for_molecules(molecules, dataset_info)
 
-    if save_to_ase:
-        for i, mol in enumerate(molecules_ase):
-            mol.write(f'generated_molecules/{args.exp_name}/epoch_{epoch}/molecule_{i}.xyz')
+    # if save_to_ase:
+    #     for i, mol in enumerate(molecules_ase):
+    #         mol.write(f'generated_molecules/{args.exp_name}/epoch_{epoch}/molecule_{i}.xyz')
 
-    wandb.log(validity_dict)
-    if rdkit_tuple is not None:
-        wandb.log({'Validity': rdkit_tuple[0][0], 'Uniqueness': rdkit_tuple[0][1], 'Novelty': rdkit_tuple[0][2]})
-    return validity_dict
+    # wandb.log(validity_dict)
+    # if rdkit_tuple is not None:
+    #     wandb.log({'Validity': rdkit_tuple[0][0], 'Uniqueness': rdkit_tuple[0][1], 'Novelty': rdkit_tuple[0][2]})
+    # return validity_dict
 
 
 def save_and_sample_conditional(args, device, model, prop_dist, dataset_info, epoch=0, id_from=0):

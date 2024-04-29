@@ -61,10 +61,10 @@ def analyze_and_save(args, eval_args, device, generative_model,
                 node_mask=node_mask)
 
     molecules = {key: torch.cat(molecules[key], dim=0) for key in molecules}
-    stability_dict, rdkit_metrics = analyze_stability_for_molecules(
-        molecules, dataset_info)
+    # stability_dict, rdkit_metrics = analyze_stability_for_molecules(
+    #     molecules, dataset_info)
 
-    return stability_dict, rdkit_metrics
+    # return stability_dict, rdkit_metrics
 
 
 def test(args, flow_dp, nodes_dist, device, dtype, loader, partition='Test', num_passes=1):
@@ -111,6 +111,7 @@ def test(args, flow_dp, nodes_dist, device, dtype, loader, partition='Test', num
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset', type=str, default="qm9", help="Specify dataset")
     parser.add_argument('--model_path', type=str, default="outputs/edm_1",
                         help='Specify model path')
     parser.add_argument('--n_samples', type=int, default=100,

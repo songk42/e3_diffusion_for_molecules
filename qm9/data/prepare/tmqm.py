@@ -162,7 +162,6 @@ def get_unique_charges(charges):
     # Create a dictionary of charges
     charge_counts = {z: np.zeros(len(charges), dtype=int)
                      for z in np.unique(charges)}
-    print(charge_counts.keys())
 
     # Loop over molecules, for each molecule get the unique charges
     for idx, mol_charges in enumerate(charges):
