@@ -39,6 +39,7 @@ parser.add_argument('--diffusion_loss_type', type=str, default='l2',
 
 parser.add_argument('--n_epochs', type=int, default=200)
 parser.add_argument('--batch_size', type=int, default=128)
+parser.add_argument('--batch_size_gen', type=int, default=128)
 parser.add_argument('--lr', type=float, default=2e-4)
 parser.add_argument('--brute_force', type=eval, default=False,
                     help='True | False')
@@ -256,7 +257,7 @@ def main():
             if not args.break_train_epoch:
                 analyze_and_save(args=args, epoch=epoch, model_sample=model_ema, nodes_dist=nodes_dist,
                                  dataset_info=dataset_info, device=device,
-                                 prop_dist=prop_dist, n_samples=args.n_stability_samples)
+                                 prop_dist=prop_dist, n_samples=args.n_stability_samples, save_to_xyz=args.save_to_xyz)
             nll_val = test(args=args, loader=dataloaders['valid'], epoch=epoch, eval_model=model_ema_dp,
                            partition='Val', device=device, dtype=dtype, nodes_dist=nodes_dist,
                            property_norms=property_norms)
@@ -292,7 +293,7 @@ def main():
             analyze_and_save(args=args, epoch=epoch, 
                             model_sample=utils.load_model(gen_model, 'outputs/%s/generative_model_ema.npy' % args.exp_name),
                             nodes_dist=nodes_dist, dataset_info=dataset_info, device=device,
-                            prop_dist=prop_dist, n_samples=10000, batch_size=500,
+                            prop_dist=prop_dist, n_samples=10000, batch_size=args.batch_size_gen,
                             save_to_ase=True)
 
 
