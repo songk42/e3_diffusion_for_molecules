@@ -107,6 +107,8 @@ parser.add_argument('--ema_decay', type=float, default=0.999,
 parser.add_argument('--augment_noise', type=float, default=0)
 parser.add_argument('--n_stability_samples', type=int, default=500,
                     help='Number of samples to compute the stability')
+parser.add_argument('--save_to_xyz', type=bool, default=False, 
+                    help='Save generated molecules to xyz file')
 parser.add_argument('--normalize_factors', type=eval, default=[1, 4, 1],
                     help='normalize factors for [x, categorical, integer]')
 parser.add_argument('--remove_h', action='store_true')
