@@ -1,7 +1,7 @@
 # Rdkit import should be first, do not move it
 try:
     from rdkit import Chem
-except ModuleNotFoundError:
+except:
     pass
 import copy
 import utils
@@ -259,7 +259,7 @@ def main():
             if not args.break_train_epoch:
                 analyze_and_save(args=args, epoch=epoch, model_sample=model_ema, nodes_dist=nodes_dist,
                                  dataset_info=dataset_info, device=device,
-                                 prop_dist=prop_dist, n_samples=args.n_stability_samples, save_to_xyz=args.save_to_xyz)
+                                 prop_dist=prop_dist, n_samples=args.n_stability_samples, save_to_ase=args.save_to_xyz)
             nll_val = test(args=args, loader=dataloaders['valid'], epoch=epoch, eval_model=model_ema_dp,
                            partition='Val', device=device, dtype=dtype, nodes_dist=nodes_dist,
                            property_norms=property_norms)
