@@ -1,7 +1,10 @@
 import argparse
 from os.path import join
 import torch
+import os
+import glob
 import pickle
+import ase.io
 from qm9.models import get_model
 from configs.datasets_config import get_dataset_info
 from qm9 import dataset
@@ -57,6 +60,182 @@ def get_dataloader(args_gen):
     return dataloaders
 
 
+def get_atom_type_one_hot(atom_type, dataset_info):
+    """Convert atom type to one-hot encoding."""
+    one_hot = torch.zeros(dataset_info['atom_types'])
+    one_hot[dataset_info['atom_encoder'][atom_type]] = 1
+    return one_hot
+
+
+class XYZDataloader:
+    def __init__(self, args_gen, xyz_dir, device, unknown_labels=False,
+                 batch_size=1, iterations=200, prop_dist=None):
+        """
+        Dataloader for XYZ files that follows the same API as DiffusionDataloader.
+        
+        Args:
+            device: Device to load data on
+            unknown_labels: Whether labels are unknown (kept for API consistency)
+            batch_size: Batch size
+            iterations: Number of iterations before raising StopIteration
+            xyz_dir: Directory containing XYZ files to load
+        """
+        self.batch_size = batch_size
+        self.iterations = iterations
+        self.device = device
+        self.unknown_labels = unknown_labels
+        self.prop_dist = prop_dist
+        self.dataset_info = get_dataset_info(args_gen.dataset, args_gen.remove_h)
+
+        # XYZ specific parameters
+        self.xyz_dir = xyz_dir
+        self.xyz_files = self._get_xyz_files()
+        self.current_idx = 0
+        self.i = 0
+    
+    
+    def _get_xyz_files(self):
+        """Get all XYZ files in the directory."""
+        if not os.path.exists(self.xyz_dir):
+            raise FileNotFoundError(f"XYZ directory {self.xyz_dir} not found")
+        
+        xyz_files = glob.glob(os.path.join(self.xyz_dir, "*.xyz"))
+        if not xyz_files:
+            raise FileNotFoundError(f"No XYZ files found in {self.xyz_dir}")
+        
+        return xyz_files
+    
+    def _load_xyz_batch(self):
+        """Load a batch of XYZ files."""
+        batch_data = []
+        
+        for _ in range(self.batch_size):
+            if self.current_idx >= len(self.xyz_files):
+                self.current_idx = 0  # Cycle through files if we run out
+            
+            xyz_file = self.xyz_files[self.current_idx]
+            batch_data.append(self._process_xyz_file(xyz_file))
+            self.current_idx += 1
+        
+        return self._collate_batch(batch_data)
+    
+    def _process_xyz_file(self, xyz_file):
+        """Process a single XYZ file into the required format."""
+        # Read molecule using ASE
+        molecule = ase.io.read(xyz_file)
+        
+        # Extract positions and atom types
+        positions = torch.tensor(molecule.get_positions(), dtype=torch.float32)
+        atom_types = molecule.get_chemical_symbols()
+        
+        # Create one-hot encoding for atom types
+        n_nodes = len(atom_types)
+        one_hot = torch.zeros((n_nodes, len(self.dataset_info['atom_types'])))
+        
+        for i, atom_type in enumerate(atom_types):
+            # Handle atom types not in the dataset info
+            if atom_type not in self.dataset_info['atom_encoder']:
+                print(f"Warning: Atom type {atom_type} not in dataset_info, defaulting to first atom type")
+                atom_idx = 0
+            else:
+                atom_idx = self.dataset_info['atom_encoder'][atom_type]
+            one_hot[i, atom_idx] = 1
+        
+        # Create node mask
+        node_mask = torch.ones(self.dataset_info['max_n_nodes'], dtype=torch.bool)
+        node_mask[n_nodes:] = False
+        
+        # Pad positions and one_hot to max_n_nodes
+        padded_positions = torch.zeros((self.dataset_info['max_n_nodes'], 3), dtype=torch.float32)
+        padded_positions[:n_nodes] = positions
+        
+        padded_one_hot = torch.zeros((self.dataset_info['max_n_nodes'], len(self.dataset_info['atom_types'])))
+        padded_one_hot[:n_nodes] = one_hot
+        
+        # Create dummy property value (could be extracted from filename or XYZ comment line)
+        if self.prop_dist is not None:
+            prop_key = self.prop_dist.properties[0] if hasattr(self.prop_dist, 'properties') else 'dummy_property'
+            # Prop value is on the second line of the XYZ file
+            with open(xyz_file, 'r') as f:
+                lines = f.readlines()
+                if len(lines) > 1:
+                    prop_value = float(lines[1].split()[-1])
+                else:
+                    prop_value = 0.0
+            prop_value = torch.tensor(prop_value, dtype=torch.float32)
+     
+        data = {
+            'positions': padded_positions,
+            'one_hot': padded_one_hot,
+            'node_mask': node_mask,
+            'n_nodes': n_nodes,
+            prop_key: prop_value
+        }
+        return data
+    
+    def _collate_batch(self, batch_data):
+        """Collate individual examples into a batch."""
+        batch_size = len(batch_data)
+        
+        # Get first example to determine shape
+        first = batch_data[0]
+        max_n_nodes = self.dataset_info['max_n_nodes']
+        
+        # Initialize tensors for the batch
+        positions = torch.zeros((batch_size, max_n_nodes, 3), dtype=torch.float32)
+        one_hot = torch.zeros((batch_size, max_n_nodes, len(self.dataset_info['atom_types'])))
+        node_mask = torch.zeros((batch_size, max_n_nodes), dtype=torch.bool)
+        
+        # Get property key
+        prop_key = self.prop_dist.properties[0] if hasattr(self.prop_dist, 'properties') else 'dummy_property'
+        prop_values = torch.zeros((batch_size, 1), dtype=torch.float32)
+        
+        # Fill tensors
+        for i, data in enumerate(batch_data):
+            positions[i, :data['n_nodes']] = data['positions'][:data['n_nodes']]
+            one_hot[i, :data['n_nodes']] = data['one_hot'][:data['n_nodes']]
+            node_mask[i] = data['node_mask']
+            prop_values[i] = data[prop_key]
+        
+        # Create edge mask
+        bs, n_nodes = node_mask.size()
+        edge_mask = node_mask.unsqueeze(1) * node_mask.unsqueeze(2)
+        diag_mask = ~torch.eye(edge_mask.size(1), dtype=torch.bool).unsqueeze(0)
+        edge_mask = edge_mask * diag_mask
+        edge_mask = edge_mask.view(bs * n_nodes * n_nodes, 1)
+        
+        # Return batch in the expected format
+        data = {
+            'positions': positions.to(self.device),
+            'atom_mask': node_mask.to(self.device),
+            'edge_mask': edge_mask.to(self.device),
+            'one_hot': one_hot.to(self.device),
+            prop_key: prop_values.to(self.device)
+        }
+        return data
+    
+    def __iter__(self):
+        """Return self as iterator."""
+        return self
+    
+    def sample(self):
+        """Sample a batch of data from XYZ files."""
+        return self._load_xyz_batch()
+    
+    def __next__(self):
+        """Get next batch."""
+        if self.i < self.iterations:
+            self.i += 1
+            return self.sample()
+        else:
+            self.i = 0
+            raise StopIteration
+    
+    def __len__(self):
+        """Return length of iterator."""
+        return self.iterations
+    
+
 class DiffusionDataloader:
     def __init__(self, args_gen, model, nodes_dist, prop_dist, device, unkown_labels=False,
                  batch_size=1, iterations=200):
@@ -104,6 +283,10 @@ class DiffusionDataloader:
             'one_hot': one_hot.detach(),
             prop_key: context.detach()
         }
+
+        # for key in data:
+        #     print(f"{key}: {data[key].shape}")
+
         return data
 
     def __next__(self):
@@ -151,6 +334,12 @@ def main_quantitative(args):
                                                    args.device, batch_size=args.batch_size, iterations=args.iterations)
         print("EDM: We evaluate the classifier on our generated samples")
         loss = test(classifier, 0, diffusion_dataloader, mean, mad, args.property, args.device, 1, args.debug_break)
+        print("Loss classifier on Generated samples: %.4f" % loss)
+    elif args.task == 'xyz':
+        xyz_dataloader = XYZDataloader(
+            args_gen=args_gen, xyz_dir=args.xyz_dir, device=args.device, batch_size=args.batch_size, iterations=args.iterations, prop_dist=prop_dist)
+        print("XYZ: We evaluate the classifier on our generated samples")
+        loss = test(classifier, 0, xyz_dataloader, mean, mad, args.property, args.device, 1, args.debug_break)
         print("Loss classifier on Generated samples: %.4f" % loss)
     elif args.task == 'qm9_second_half':
         print("qm9_second_half: We evaluate the classifier on QM9")
@@ -220,7 +409,10 @@ if __name__ == "__main__":
                         help='naive, edm, qm9_second_half, qualitative')
     parser.add_argument('--n_sweeps', type=int, default=10,
                         help='number of sweeps for the qualitative conditional experiment')
-
+    parser.add_argument(
+        "--xyz_dir", type=str, default='',
+        help="Directory containing XYZ files."
+    )
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
     device = torch.device("cuda" if args.cuda else "cpu")
