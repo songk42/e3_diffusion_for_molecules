@@ -60,13 +60,6 @@ def get_dataloader(args_gen):
     return dataloaders
 
 
-def get_atom_type_one_hot(atom_type, dataset_info):
-    """Convert atom type to one-hot encoding."""
-    one_hot = torch.zeros(dataset_info['atom_types'])
-    one_hot[dataset_info['atom_encoder'][atom_type]] = 1
-    return one_hot
-
-
 class XYZDataloader:
     def __init__(self, args_gen, xyz_dir, device, unknown_labels=False,
                  batch_size=1, iterations=200, prop_dist=None):
