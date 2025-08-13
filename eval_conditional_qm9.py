@@ -1,6 +1,7 @@
 import argparse
 from os.path import join
 import torch
+from torch import tensor
 import os
 import glob
 import pickle
@@ -43,6 +44,7 @@ def get_args_gen(dir_path):
 
 def get_generator(dir_path, dataloaders, device, args_gen, property_norms):
     dataset_info = get_dataset_info(args_gen.dataset, args_gen.remove_h)
+    args_gen.nn_cutoff = None
     model, nodes_dist, prop_dist = get_model(args_gen, device, dataset_info, dataloaders['train'])
     fn = 'generative_model_ema.npy' if args_gen.ema_decay > 0 else 'generative_model.npy'
     model_state_dict = torch.load(join(dir_path, fn), map_location='cpu')
@@ -107,7 +109,10 @@ class XYZDataloader:
                 self.current_idx = 0  # Cycle through files if we run out
             
             xyz_file = self.xyz_files[self.current_idx]
-            batch_data.append(self._process_xyz_file(xyz_file))
+            try:
+                batch_data.append(self._process_xyz_file(xyz_file))
+            except:
+                pass
             self.current_idx += 1
         
         return self._collate_batch(batch_data)
@@ -152,7 +157,11 @@ class XYZDataloader:
             with open(xyz_file, 'r') as f:
                 lines = f.readlines()
                 if len(lines) > 1:
-                    prop_value = float(lines[1].split()[-1])
+                    prop_value = lines[1].split()[-1]
+                    if prop_value[:6] == "tensor":
+                        prop_value = eval(prop_value).squeeze().item()
+                    else:
+                        prop_value = float(prop_value)
                 else:
                     prop_value = 0.0
             prop_value = torch.tensor(prop_value, dtype=torch.float32)
