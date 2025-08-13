@@ -88,13 +88,22 @@ class PreprocessQM9:
         #Obtain edges
         batch_size, n_nodes = atom_mask.size()
         edge_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
-
+        
+        # Compute diameters of each graph.
+        # atom_positions = batch['positions']
+        # atom_positions = atom_positions.view(batch_size, n_nodes, 3)
+        # atom_positions = atom_positions.view(batch_size, n_nodes, 1, 3)
+        # atom_positions = atom_positions.expand(-1, -1, n_nodes, -1)
+        # atom_positions_t = atom_positions.transpose(1, 2)
+        # distances = torch.norm(atom_positions - atom_positions_t, dim=-1)
+        # max_distance = torch.amax(distances, dim=(1, 2))
+        # raise ValueError("Diameter: ", max_distance)
+        
         #mask diagonal
         diag_mask = ~torch.eye(edge_mask.size(1), dtype=torch.bool).unsqueeze(0)
         edge_mask *= diag_mask
 
-        #edge_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
-        batch['edge_mask'] = edge_mask.view(batch_size * n_nodes * n_nodes, 1)
+        batch['edge_mask'] = edge_mask
 
         if self.load_charges:
             batch['charges'] = batch['charges'].unsqueeze(2)

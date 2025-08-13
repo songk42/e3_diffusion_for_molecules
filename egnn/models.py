@@ -10,7 +10,7 @@ class EGNN_dynamics_QM9(nn.Module):
                  n_dims, hidden_nf=64, device='cpu',
                  act_fn=torch.nn.SiLU(), n_layers=4, attention=False,
                  condition_time=True, tanh=False, mode='egnn_dynamics', norm_constant=0,
-                 inv_sublayers=2, sin_embedding=False, normalization_factor=100, aggregation_method='sum'):
+                 inv_sublayers=2, sin_embedding=False, normalization_factor=100, aggregation_method='sum', nn_cutoff=None):
         super().__init__()
         self.mode = mode
         if mode == 'egnn_dynamics':
@@ -34,6 +34,7 @@ class EGNN_dynamics_QM9(nn.Module):
         self.n_dims = n_dims
         self._edges_dict = {}
         self.condition_time = condition_time
+        self.nn_cutoff = nn_cutoff
 
     def forward(self, t, xh, node_mask, edge_mask, context=None):
         raise NotImplementedError
@@ -55,6 +56,23 @@ class EGNN_dynamics_QM9(nn.Module):
         edge_mask = edge_mask.view(bs*n_nodes*n_nodes, 1)
         xh = xh.view(bs*n_nodes, -1).clone() * node_mask
         x = xh[:, 0:self.n_dims].clone()
+
+        # Update edge mask based on radial cutoff.
+        if self.nn_cutoff is not None:
+            
+            atom_positions = x.view(bs, n_nodes, -1)[:, :, :self.n_dims]
+            num_batches, num_atoms, _ = atom_positions.shape
+            assert atom_positions.shape == (num_batches, num_atoms, 3)
+
+            distance_matrix = torch.norm(atom_positions.unsqueeze(1) - atom_positions.unsqueeze(2), dim=-1)
+            assert distance_matrix.shape == (num_batches, num_atoms, num_atoms)
+
+            edge_mask = edge_mask.view(num_batches, num_atoms, num_atoms)
+            edge_mask *= (distance_matrix <= self.nn_cutoff)
+            assert edge_mask.shape == (num_batches, num_atoms, num_atoms)
+
+            edge_mask = edge_mask.view(num_batches * num_atoms * num_atoms, 1)
+
         if h_dims == 0:
             h = torch.ones(bs*n_nodes, 1).to(self.device)
         else:
