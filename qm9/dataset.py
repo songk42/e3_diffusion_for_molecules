@@ -71,6 +71,7 @@ def retrieve_dataloaders(cfg):
         # Initialize dataloader
         args = init_argparse('tmqm')
         # data_dir = cfg.data_root_dir
+        print(args, cfg.datadir, cfg.dataset)
         args, datasets, num_species, charge_scale = initialize_datasets(args, cfg.datadir, cfg.dataset,
                                                                         # subtract_thermo=args.subtract_thermo,
                                                                         force_download=args.force_download,

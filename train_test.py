@@ -176,7 +176,8 @@ def sample_different_sizes_and_save(model, nodes_dist, args, device, dataset_inf
 
 
 def undo_one_hot(arr):
-    atomic_numbers = np.array([1, 6, 7, 8, 9])
+    #atomic_numbers = np.array([1, 6, 7, 8, 9])
+    atomic_numbers = np.arange(1, 84)
     return atomic_numbers[arr.argmax(axis=-1)]
 
 
@@ -207,6 +208,9 @@ def analyze_and_save(epoch, model_sample, nodes_dist, args, device, dataset_info
     # validity_dict, rdkit_tuple = analyze_stability_for_molecules(molecules, dataset_info)
 
     if save_to_ase:
+        import os
+        if not os.path.exists(f'generated_molecules/{args.exp_name}/epoch_{epoch}'):
+            os.makedirs(f'generated_molecules/{args.exp_name}/epoch_{epoch}')
         for i, mol in enumerate(molecules_ase):
             mol.write(f'generated_molecules/{args.exp_name}/epoch_{epoch}/molecule_{i}.xyz')
 

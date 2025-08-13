@@ -1,7 +1,7 @@
 # Rdkit import should be first, do not move it
 try:
     from rdkit import Chem
-except ModuleNotFoundError:
+except:
     pass
 import copy
 import utils
@@ -108,6 +108,8 @@ parser.add_argument('--ema_decay', type=float, default=0.999,
 parser.add_argument('--augment_noise', type=float, default=0)
 parser.add_argument('--n_stability_samples', type=int, default=500,
                     help='Number of samples to compute the stability')
+parser.add_argument('--save_to_xyz', type=bool, default=False, 
+                    help='Save generated molecules to xyz file')
 parser.add_argument('--normalize_factors', type=eval, default=[1, 4, 1],
                     help='normalize factors for [x, categorical, integer]')
 parser.add_argument('--remove_h', action='store_true')
@@ -257,7 +259,7 @@ def main():
             if not args.break_train_epoch:
                 analyze_and_save(args=args, epoch=epoch, model_sample=model_ema, nodes_dist=nodes_dist,
                                  dataset_info=dataset_info, device=device,
-                                 prop_dist=prop_dist, n_samples=args.n_stability_samples)
+                                 prop_dist=prop_dist, n_samples=args.n_stability_samples, save_to_ase=args.save_to_xyz)
             nll_val = test(args=args, loader=dataloaders['valid'], epoch=epoch, eval_model=model_ema_dp,
                            partition='Val', device=device, dtype=dtype, nodes_dist=nodes_dist,
                            property_norms=property_norms)
