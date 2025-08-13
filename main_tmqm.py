@@ -17,6 +17,7 @@ from equivariant_diffusion import utils as flow_utils
 import torch
 import time
 import pickle
+import logging
 from qm9.utils import prepare_context, compute_mean_mad
 from train_test import train_epoch, test, analyze_and_save
 
@@ -39,6 +40,7 @@ parser.add_argument('--diffusion_loss_type', type=str, default='l2',
 
 parser.add_argument('--n_epochs', type=int, default=200)
 parser.add_argument('--batch_size', type=int, default=128)
+parser.add_argument('--generate_batch_size', type=int, default=128)
 parser.add_argument('--lr', type=float, default=2e-4)
 parser.add_argument('--brute_force', type=eval, default=False,
                     help='True | False')
@@ -155,10 +157,9 @@ if args.resume is not None:
     if not hasattr(args, 'aggregation_method'):
         args.aggregation_method = aggregation_method
 
-    print(args)
+    logging.info(args)
 
 utils.create_folders(args)
-# print(args)
 
 
 # Wandb config
@@ -175,11 +176,9 @@ wandb.save('*.txt')
 dataloaders, charge_scale = dataset.retrieve_dataloaders(args)
 
 data_dummy = next(iter(dataloaders['train']))
-print(data_dummy)
-
 
 if len(args.conditioning) > 0:
-    print(f'Conditioning on {args.conditioning}')
+    logging.info(f'Conditioning on {args.conditioning}')
     property_norms = compute_mean_mad(dataloaders, args.conditioning, args.dataset)
     context_dummy = prepare_context(args.conditioning, data_dummy, property_norms)
     context_node_nf = context_dummy.size(2)
@@ -191,6 +190,7 @@ args.context_node_nf = context_node_nf
 
 
 # Create EGNN flow
+logging.info("Loading models...")
 model, nodes_dist, prop_dist = get_model(args, device, dataset_info, dataloaders['train'])
 gen_model, _, _ = get_model(args, device, dataset_info, dataloaders['train'])
 if prop_dist is not None:
@@ -198,7 +198,7 @@ if prop_dist is not None:
 model = model.to(device)
 gen_model = gen_model.to(device)
 optim = get_optim(args, model)
-# print(model)
+logging.info("Loaded models!")
 
 gradnorm_queue = utils.Queue()
 gradnorm_queue.add(3000)  # Add large value that will be flushed.
@@ -219,7 +219,7 @@ def main():
 
     # Initialize dataparallel if enabled and possible.
     if args.dp and torch.cuda.device_count() > 1:
-        print(f'Training using {torch.cuda.device_count()} GPUs')
+        logging.info(f'Training using {torch.cuda.device_count()} GPUs')
         model_dp = torch.nn.DataParallel(model.cpu())
         model_dp = model_dp.cuda()
     else:
@@ -241,13 +241,14 @@ def main():
 
     best_nll_val = 1e8
     best_nll_test = 1e8
+    logging.info("Starting training.")
     for epoch in range(args.start_epoch, args.n_epochs):
         start_epoch = time.time()
         train_epoch(args=args, loader=dataloaders['train'], epoch=epoch, model=model, model_dp=model_dp,
                     model_ema=model_ema, ema=ema, device=device, dtype=dtype, property_norms=property_norms,
                     nodes_dist=nodes_dist, dataset_info=dataset_info,
                     gradnorm_queue=gradnorm_queue, optim=optim, prop_dist=prop_dist)
-        print(f"Epoch took {time.time() - start_epoch:.1f} seconds.")
+        logging.info(f"Epoch took {time.time() - start_epoch:.1f} seconds.")
 
         if epoch % args.test_epochs == 0:
             if isinstance(model, en_diffusion.EnVariationalDiffusion):
@@ -283,8 +284,8 @@ def main():
                         utils.save_model(model_ema, 'outputs/%s/generative_model_ema_%d.npy' % (args.exp_name, epoch))
                     with open('outputs/%s/args_%d.pickle' % (args.exp_name, epoch), 'wb') as f:
                         pickle.dump(args, f)
-            print('Val loss: %.4f \t Test loss:  %.4f' % (nll_val, nll_test))
-            print('Best val loss: %.4f \t Best test loss:  %.4f' % (best_nll_val, best_nll_test))
+            logging.info('Val loss: %.4f \t Test loss:  %.4f' % (nll_val, nll_test))
+            logging.info('Best val loss: %.4f \t Best test loss:  %.4f' % (best_nll_val, best_nll_test))
             wandb.log({"Val loss ": nll_val}, commit=True)
             wandb.log({"Test loss ": nll_test}, commit=True)
             wandb.log({"Best cross-validated test loss ": best_nll_test}, commit=True)
@@ -292,7 +293,7 @@ def main():
             analyze_and_save(args=args, epoch=epoch, 
                             model_sample=utils.load_model(gen_model, 'outputs/%s/generative_model_ema.npy' % args.exp_name),
                             nodes_dist=nodes_dist, dataset_info=dataset_info, device=device,
-                            prop_dist=prop_dist, n_samples=10000, batch_size=500,
+                            prop_dist=prop_dist, n_samples=10000, batch_size=args.generate_batch_size,
                             save_to_ase=True)
 
 

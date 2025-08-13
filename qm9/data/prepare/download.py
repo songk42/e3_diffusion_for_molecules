@@ -41,6 +41,7 @@ def prepare_dataset(datadir, dataset, subset=None, splits=None, cleanup=True, fo
         dataset_dir = [datadir, dataset, subset]
     else:
         dataset_dir = [datadir, dataset]
+    print("dataset_dir:", dataset_dir)
 
     # Names of splits, based upon keys if split dictionary exists, elsewise default to train/valid/test.
     split_names = splits.keys() if splits is not None else [
@@ -58,7 +59,7 @@ def prepare_dataset(datadir, dataset, subset=None, splits=None, cleanup=True, fo
     # Probably should add more consistency checks, such as number of datapoints, etc...
     new_download = False
     if all(datafiles_checks):
-        logging.info('Dataset exists and is processed.')
+        print('Dataset exists and is processed.')
     elif all([not x for x in datafiles_checks]):
         # If checks are failed.
         new_download = True
@@ -68,7 +69,7 @@ def prepare_dataset(datadir, dataset, subset=None, splits=None, cleanup=True, fo
 
     # If need to download dataset, pass to appropriate downloader
     if new_download or force_download:
-        logging.info('Dataset does not exist. Downloading!')
+        print('Dataset does not exist. Downloading!')
         if dataset.lower().startswith('qm9'):
             download_dataset_qm9(datadir, dataset, splits, cleanup=cleanup)
         elif dataset.lower().startswith('md17'):

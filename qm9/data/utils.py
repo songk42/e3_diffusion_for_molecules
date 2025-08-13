@@ -53,8 +53,10 @@ def initialize_datasets(args, datadir, dataset, subset=None,
                'test': args.num_test, 'valid': args.num_valid}
 
     # Download and process dataset. Returns datafiles.
+    dataset_to_prepare = dataset
+    if "qm9" in dataset_to_prepare: dataset_to_prepare = "qm9"
     datafiles = prepare_dataset(
-        datadir, dataset, subset, force_download=force_download)
+        datadir, dataset_to_prepare, subset, force_download=force_download)
 
     # Load downloaded/processed datasets
     datasets = {}
