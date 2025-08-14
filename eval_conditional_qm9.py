@@ -364,14 +364,34 @@ def main_quantitative(args):
     #    print("Loss numnodes classifier on EDM generated samples: %.4f" % loss)
 
 
-def save_and_sample_conditional(args, device, model, prop_dist, dataset_info, epoch=0, id_from=0):
-    one_hot, charges, x, node_mask = sample_sweep_conditional(args, device, model, dataset_info, prop_dist)
+def save_and_sample_conditional(
+    args,
+    device, 
+    model, 
+    prop_dist, 
+    dataset_info, 
+    epoch=0, 
+    id_from=0, 
+    visualize=False, 
+    n_nodes=19, 
+    n_frames=100,
+):
+    one_hot, charges, x, node_mask = sample_sweep_conditional(
+        args, 
+        device, 
+        model, 
+        dataset_info, 
+        prop_dist, 
+        n_nodes=n_nodes, 
+        n_frames=n_frames,
+    )
 
     vis.save_xyz_file(
         'outputs/%s/analysis/run%s/' % (args.exp_name, epoch), one_hot, charges, x, dataset_info,
         id_from, name='conditional', node_mask=node_mask)
 
-    vis.visualize_chain("outputs/%s/analysis/run%s/" % (args.exp_name, epoch), dataset_info,
+    if visualize:
+        vis.visualize_chain("outputs/%s/analysis/run%s/" % (args.exp_name, epoch), dataset_info,
                         wandb=None, mode='conditional', spheres_3d=True)
 
     return one_hot, charges, x
@@ -387,7 +407,17 @@ def main_qualitative(args):
 
     for i in range(args.n_sweeps):
         print("Sampling sweep %d/%d" % (i+1, args.n_sweeps))
-        save_and_sample_conditional(args_gen, device, model, prop_dist, dataset_info, epoch=i, id_from=0)
+        save_and_sample_conditional(
+            args_gen, 
+            device, 
+            model, 
+            prop_dist, 
+            dataset_info, 
+            epoch=i, 
+            id_from=0,
+            n_nodes=args.n_nodes,
+            n_frames=args.n_frames,
+        )
 
 
 if __name__ == "__main__":
@@ -411,6 +441,10 @@ if __name__ == "__main__":
                         help='naive, edm, qm9_second_half, qualitative')
     parser.add_argument('--n_sweeps', type=int, default=10,
                         help='number of sweeps for the qualitative conditional experiment')
+    parser.add_argument('--n_nodes', type=int, default=19,
+                        help='number of nodes in each generated molecule')
+    parser.add_argument('--n_frames', type=int, default=100,
+                        help='number of values of the given property to evaluate at')
     parser.add_argument(
         "--xyz_dir", type=str, default='',
         help="Directory containing XYZ files."
