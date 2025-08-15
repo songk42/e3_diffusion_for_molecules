@@ -15,6 +15,7 @@ from qm9.property_prediction.main_qm9_prop import test
 from qm9.property_prediction import main_qm9_prop
 from qm9.sampling import sample_chain, sample, sample_sweep_conditional
 import qm9.visualizer as vis
+import tqdm
 
 
 def get_classifier(dir_path='', device='cpu'):
@@ -397,16 +398,41 @@ def save_and_sample_conditional(
     return one_hot, charges, x
 
 
+def reorganize_sweep_outputs(output_dir):
+    """Reorganizes outputs by frame #, as opposed to sweep #"""
+    new_dir = os.path.join(output_dir, "xyzs_by_frame")
+
+    for run_dir in os.listdir(os.path.join(output_dir, "analysis")):
+        run_dir_full = os.path.join(output_dir, "analysis", run_dir)
+        if not os.path.isdir(run_dir_full):
+            continue
+        for output_file in os.listdir(run_dir_full):
+            filename = os.path.splitext(output_file)[0]
+            alpha = filename.split('_')[1]
+            alpha_dir = os.path.join(new_dir, alpha)
+            if not os.path.isdir(alpha_dir):
+                os.makedirs(alpha_dir, exist_ok=False)
+
+            with open(os.path.join(run_dir_full, output_file), 'r') as f:
+                content = f.read()
+            with open(os.path.join(alpha_dir, f"{run_dir}.xyz"), 'w') as f:
+                f.write(content)
+
+
 def main_qualitative(args):
     args_gen = get_args_gen(args.generators_path)
     dataloaders = get_dataloader(args_gen)
+    print("Getting property info...")
     property_norms = compute_mean_mad(dataloaders, args_gen.conditioning, args_gen.dataset)
+    print("Getting generator...")
     model, nodes_dist, prop_dist, dataset_info = get_generator(args.generators_path,
                                                                dataloaders, args.device, args_gen,
                                                                property_norms)
+    for key in prop_dist.distributions:
+        min_val, max_val = prop_dist.distributions[key][args.n_nodes]['params']
+        print(f"Property {key}: Evaluating at {args.n_frames} values in range [{min_val}, {max_val}]")
 
-    for i in range(args.n_sweeps):
-        print("Sampling sweep %d/%d" % (i+1, args.n_sweeps))
+    for i in tqdm.tqdm(range(args.n_sweeps), desc="Sampling sweep"):
         save_and_sample_conditional(
             args_gen, 
             device, 
@@ -418,6 +444,8 @@ def main_qualitative(args):
             n_nodes=args.n_nodes,
             n_frames=args.n_frames,
         )
+    
+    reorganize_sweep_outputs(f"outputs/{args_gen.exp_name}")
 
 
 if __name__ == "__main__":
