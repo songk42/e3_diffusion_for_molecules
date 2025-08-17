@@ -158,8 +158,11 @@ class XYZDataloader:
             with open(xyz_file, 'r') as f:
                 lines = f.readlines()
                 if len(lines) > 1:
-                    prop_value = lines[1].split()[-1]
-                    if prop_value[:6] == "tensor":
+                    if lines[1].split():
+                        prop_value = lines[1].split()[-1]
+                    else:  # blank line; default to mean value
+                        prop_value = str(self.prop_dist.normalizer[prop_key]['mean'])
+                    if "tensor" in prop_value:
                         prop_value = eval(prop_value).squeeze().item()
                     else:
                         prop_value = float(prop_value)
@@ -408,14 +411,14 @@ def reorganize_sweep_outputs(output_dir):
             continue
         for output_file in os.listdir(run_dir_full):
             filename = os.path.splitext(output_file)[0]
-            alpha = filename.split('_')[1]
-            alpha_dir = os.path.join(new_dir, alpha)
-            if not os.path.isdir(alpha_dir):
-                os.makedirs(alpha_dir, exist_ok=False)
+            prop = filename.split('_')[1]
+            prop_dir = os.path.join(new_dir, prop)
+            if not os.path.isdir(prop_dir):
+                os.makedirs(prop_dir, exist_ok=False)
 
             with open(os.path.join(run_dir_full, output_file), 'r') as f:
                 content = f.read()
-            with open(os.path.join(alpha_dir, f"{run_dir}.xyz"), 'w') as f:
+            with open(os.path.join(prop_dir, f"{run_dir}.xyz"), 'w') as f:
                 f.write(content)
 
 
