@@ -36,6 +36,7 @@ def train(model, epoch, loader, mean, mad, property, device, partition='train', 
         # nodes = torch.cat([one_hot, charges], dim=1)
         edges = prop_utils.get_adj_matrix(n_nodes, batch_size, device)
         label = data[property].to(device, torch.float32)
+        print("# of mols:", len(label))
 
         '''
         print("Positions mean")

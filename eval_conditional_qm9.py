@@ -113,6 +113,7 @@ class XYZDataloader:
             try:
                 batch_data.append(self._process_xyz_file(xyz_file))
             except:
+                print("Could not read", xyz_file)
                 pass
             self.current_idx += 1
         
@@ -244,7 +245,7 @@ class XYZDataloader:
 
 class DiffusionDataloader:
     def __init__(self, args_gen, model, nodes_dist, prop_dist, device, unkown_labels=False,
-                 batch_size=1, iterations=200):
+                 batch_size=1, iterations=200, context=None):
         self.args_gen = args_gen
         self.model = model
         self.nodes_dist = nodes_dist
@@ -253,15 +254,24 @@ class DiffusionDataloader:
         self.iterations = iterations
         self.device = device
         self.unkown_labels = unkown_labels
+        # TODO this assumes context is a scalar
+        self.context = context
         self.dataset_info = get_dataset_info(self.args_gen.dataset, self.args_gen.remove_h)
         self.i = 0
+        self.samples = []
+
+        for key in self.args_gen.conditioning:
+            print(f"Prop dist for {key}:", self.prop_dist.normalizer[key])
 
     def __iter__(self):
         return self
 
     def sample(self):
         nodesxsample = self.nodes_dist.sample(self.batch_size)
-        context = self.prop_dist.sample_batch(nodesxsample).to(self.device)
+        if self.context:
+            context = torch.ones((self.batch_size, 1), device=self.device) * self.context
+        else:
+            context = self.prop_dist.sample_batch(nodesxsample).to(self.device)
         one_hot, charges, x, node_mask = sample(self.args_gen, self.device, self.model,
                                                 self.dataset_info, self.prop_dist, nodesxsample=nodesxsample,
                                                 context=context)
@@ -296,15 +306,26 @@ class DiffusionDataloader:
         return data
 
     def __next__(self):
-        if self.i <= self.iterations:
+        if self.i < self.iterations:
+            if len(self.samples) > self.i:
+                out = self.samples[self.i]
+            else:
+                out = self.sample()
+                self.samples.append(out)
             self.i += 1
-            return self.sample()
+            return out
         else:
             self.i = 0
             raise StopIteration
 
     def __len__(self):
         return self.iterations
+
+    def save_samples(self, dataset_info):
+        for i, sample in enumerate(self.samples):
+            vis.save_xyz_file(
+                'outputs/%s/prop%s/' % (self.args_gen.exp_name, self.context), sample["one_hot"], None, 
+                sample["positions"], dataset_info, i * self.batch_size, name='conditional', node_mask=sample["atom_mask"])
 
 
 def main_quantitative(args):
@@ -328,7 +349,7 @@ def main_quantitative(args):
 
     dataloaders = get_dataloader(args_gen)
     property_norms = compute_mean_mad(dataloaders, args_gen.conditioning, args_gen.dataset)
-    model, nodes_dist, prop_dist, _ = get_generator(args.generators_path, dataloaders,
+    model, nodes_dist, prop_dist, dataset_info = get_generator(args.generators_path, dataloaders,
                                                     args.device, args_gen, property_norms)
 
     # Create a dataloader with the generator
@@ -337,14 +358,17 @@ def main_quantitative(args):
 
     if args.task == 'edm':
         diffusion_dataloader = DiffusionDataloader(args_gen, model, nodes_dist, prop_dist,
-                                                   args.device, batch_size=args.batch_size, iterations=args.iterations)
-        print("EDM: We evaluate the classifier on our generated samples")
+                                                   args.device, batch_size=args.batch_size,
+                                                   iterations=args.iterations, context=args.context)
+        print(f"EDM: We evaluate the classifier on {args.iterations * args.batch_size} generated samples")
         loss = test(classifier, 0, diffusion_dataloader, mean, mad, args.property, args.device, 1, args.debug_break)
         print("Loss classifier on Generated samples: %.4f" % loss)
+        print("Saving samples")
+        diffusion_dataloader.save_samples(dataset_info)
     elif args.task == 'xyz':
         xyz_dataloader = XYZDataloader(
             args_gen=args_gen, xyz_dir=args.xyz_dir, device=args.device, batch_size=args.batch_size, iterations=args.iterations, prop_dist=prop_dist)
-        print("XYZ: We evaluate the classifier on our generated samples")
+        print(f"XYZ: We evaluate the classifier on {len(xyz_dataloader.xyz_files)} generated samples")
         loss = test(classifier, 0, xyz_dataloader, mean, mad, args.property, args.device, 1, args.debug_break)
         print("Loss classifier on Generated samples: %.4f" % loss)
     elif args.task == 'qm9_second_half':
@@ -476,6 +500,8 @@ if __name__ == "__main__":
                         help='number of nodes in each generated molecule')
     parser.add_argument('--n_frames', type=int, default=100,
                         help='number of values of the given property to evaluate at')
+    parser.add_argument('--context', type=float, default=None,
+                        help='value of property to condition on')
     parser.add_argument(
         "--xyz_dir", type=str, default='',
         help="Directory containing XYZ files."
