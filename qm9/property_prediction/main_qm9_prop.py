@@ -166,6 +166,8 @@ if __name__ == "__main__":
     parser.add_argument('--model_name', type=str, default='egnn', metavar='N',
                         help='egnn | naive | numnodes')
     parser.add_argument('--save_model', type=eval, default=True)
+    parser.add_argument('--checkpoint_interval', type=int, default=0,
+                        help='Save checkpoint every N epochs. 0 to disable. (default: 0)')
 
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -213,6 +215,9 @@ if __name__ == "__main__":
                         pickle.dump(args, f)
             print("Val loss: %.4f \t test loss: %.4f \t epoch %d" % (val_loss, test_loss, epoch))
             print("Best: val loss: %.4f \t test loss: %.4f \t epoch %d" % (res['best_val'], res['best_test'], res['best_epoch']))
+
+        if args.save_model and args.checkpoint_interval > 0 and epoch % args.checkpoint_interval == 0:
+            torch.save(model.state_dict(), args.outf + "/" + args.exp_name + "/checkpoint_epoch_%d.npy" % epoch)
 
         json_object = json.dumps(res, indent=4)
         with open(args.outf + "/" + args.exp_name + "/losess.json", "w") as outfile:
