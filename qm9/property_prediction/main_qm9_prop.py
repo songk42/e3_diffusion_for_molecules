@@ -8,6 +8,7 @@ from qm9.property_prediction import prop_utils
 import json
 from qm9 import dataset, utils
 import pickle
+import wandb
 
 loss_l1 = nn.L1Loss()
 
@@ -35,7 +36,12 @@ def train(model, epoch, loader, mean, mad, property, device, partition='train', 
         nodes = nodes.view(batch_size * n_nodes, -1)
         # nodes = torch.cat([one_hot, charges], dim=1)
         edges = prop_utils.get_adj_matrix(n_nodes, batch_size, device)
-        label = data[property].to(device, torch.float32)
+        if property == 'relative_atomic_energy':
+            U0 = data['U0'].to(device, torch.float32)
+            num_atoms = data['atom_mask'].to(device, torch.float32).sum(dim=1)
+            label = U0 / num_atoms
+        else:
+            label = data[property].to(device, torch.float32)
         print("# of mols:", len(label))
 
         '''
@@ -144,7 +150,7 @@ if __name__ == "__main__":
     parser.add_argument('--n_layers', type=int, default=7, metavar='N',
                         help='number of layers for the autoencoder')
     parser.add_argument('--property', type=str, default='alpha', metavar='N',
-                        help='label to predict: alpha | gap | homo | lumo | mu | Cv | G | H | r2 | U | U0 | zpve')
+                        help='label to predict: alpha | gap | homo | lumo | mu | Cv | G | H | r2 | U | U0 | zpve | relative_atomic_energy')
     parser.add_argument('--num_workers', type=int, default=0, metavar='N',
                         help='number of workers for the dataloader')
     parser.add_argument('--filter_n_atoms', type=int, default=None,
@@ -176,6 +182,8 @@ if __name__ == "__main__":
     args.device = device
     print(args)
 
+    wandb.init(project="qm9_property_prediction", name=args.exp_name, config=vars(args))
+
     res = {'epochs': [], 'losess': [], 'best_val': 1e10, 'best_test': 1e10, 'best_epoch': 0}
 
     prop_utils.makedir(args.outf)
@@ -187,8 +195,15 @@ if __name__ == "__main__":
     dataloaders["test"] = dataloaders_aux["train"]
 
     # compute mean and mean absolute deviation
-    property_norms = utils.compute_mean_mad_from_dataloader(dataloaders['valid'], [args.property])
-    mean, mad = property_norms[args.property]['mean'], property_norms[args.property]['mad']
+    if args.property == 'relative_atomic_energy':
+        U0_vals = dataloaders['valid'].dataset.data['U0']
+        num_atoms_vals = dataloaders['valid'].dataset.data['num_atoms'].float()
+        rae_vals = U0_vals / num_atoms_vals
+        mean = torch.mean(rae_vals)
+        mad = torch.mean(torch.abs(rae_vals - mean))
+    else:
+        property_norms = utils.compute_mean_mad_from_dataloader(dataloaders['valid'], [args.property])
+        mean, mad = property_norms[args.property]['mean'], property_norms[args.property]['mad']
 
     model = get_model(args)
 
@@ -198,7 +213,7 @@ if __name__ == "__main__":
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs)
 
     for epoch in range(0, args.epochs):
-        train(model, epoch, dataloaders['train'], mean, mad, args.property, device, partition='train', optimizer=optimizer, lr_scheduler=lr_scheduler, log_interval=args.log_interval)
+        train_loss = train(model, epoch, dataloaders['train'], mean, mad, args.property, device, partition='train', optimizer=optimizer, lr_scheduler=lr_scheduler, log_interval=args.log_interval)
         if epoch % args.test_interval == 0:
             val_loss = train(model, epoch, dataloaders['valid'], mean, mad, args.property, device, partition='valid', optimizer=optimizer, lr_scheduler=lr_scheduler, log_interval=args.log_interval)
             test_loss = test(model, epoch, dataloaders['test'], mean, mad, args.property, device, log_interval=args.log_interval)
@@ -215,6 +230,9 @@ if __name__ == "__main__":
                         pickle.dump(args, f)
             print("Val loss: %.4f \t test loss: %.4f \t epoch %d" % (val_loss, test_loss, epoch))
             print("Best: val loss: %.4f \t test loss: %.4f \t epoch %d" % (res['best_val'], res['best_test'], res['best_epoch']))
+            wandb.log({'val_loss': val_loss, 'test_loss': test_loss, 'best_val': res['best_val'], 'best_test': res['best_test']}, step=epoch)
+
+        wandb.log({'train_loss': train_loss, 'lr': lr_scheduler.get_last_lr()[0]}, step=epoch)
 
         if args.save_model and args.checkpoint_interval > 0 and epoch % args.checkpoint_interval == 0:
             torch.save(model.state_dict(), args.outf + "/" + args.exp_name + "/checkpoint_epoch_%d.npy" % epoch)
