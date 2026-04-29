@@ -36,12 +36,7 @@ def train(model, epoch, loader, mean, mad, property, device, partition='train', 
         nodes = nodes.view(batch_size * n_nodes, -1)
         # nodes = torch.cat([one_hot, charges], dim=1)
         edges = prop_utils.get_adj_matrix(n_nodes, batch_size, device)
-        if property == 'relative_atomic_energy':
-            U0 = data['U0'].to(device, torch.float32)
-            num_atoms = data['atom_mask'].to(device, torch.float32).sum(dim=1)
-            label = U0 / num_atoms
-        else:
-            label = data[property].to(device, torch.float32)
+        label = data[property].to(device, torch.float32)
         print("# of mols:", len(label))
 
         '''
@@ -194,16 +189,18 @@ if __name__ == "__main__":
     dataloaders_aux, _ = dataset.retrieve_dataloaders(args)
     dataloaders["test"] = dataloaders_aux["train"]
 
-    # compute mean and mean absolute deviation
+    # For relative_atomic_energy we fit a per-element linear baseline on the
+    # train split (matching Symphony's RelativeAtomicEnergyConditioner) and
+    # add it as a precomputed column on every split. After this, the property
+    # is treated like any other dataset column.
     if args.property == 'relative_atomic_energy':
-        U0_vals = dataloaders['valid'].dataset.data['U0']
-        num_atoms_vals = dataloaders['valid'].dataset.data['num_atoms'].float()
-        rae_vals = U0_vals / num_atoms_vals
-        mean = torch.mean(rae_vals)
-        mad = torch.mean(torch.abs(rae_vals - mean))
-    else:
-        property_norms = utils.compute_mean_mad_from_dataloader(dataloaders['valid'], [args.property])
-        mean, mad = property_norms[args.property]['mean'], property_norms[args.property]['mad']
+        relenergy_weights = utils.fit_relenergy_baseline(dataloaders['train'].dataset)
+        for split in ('train', 'valid', 'test'):
+            if split in dataloaders:
+                utils.add_relative_atomic_energy(dataloaders[split].dataset, relenergy_weights)
+
+    property_norms = utils.compute_mean_mad_from_dataloader(dataloaders['valid'], [args.property])
+    mean, mad = property_norms[args.property]['mean'], property_norms[args.property]['mad']
 
     model = get_model(args)
 

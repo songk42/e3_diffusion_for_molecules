@@ -1,4 +1,6 @@
 import argparse
+import csv
+import re
 from os.path import join
 import torch
 from torch import tensor
@@ -6,6 +8,7 @@ import os
 import glob
 import pickle
 import ase.io
+from qm9.property_prediction import prop_utils
 from qm9.models import get_model
 from configs.datasets_config import get_dataset_info
 from qm9 import dataset
@@ -16,6 +19,28 @@ from qm9.property_prediction import main_qm9_prop
 from qm9.sampling import sample_chain, sample, sample_sweep_conditional
 import qm9.visualizer as vis
 import tqdm
+
+# Symphony conditioning normalization (QM9 train split, idx 0..50000).
+# Source: ~/symphony-torch/scripts/sample_sweep_alpha.sh, sample_sweep.sh.
+# unit_factor converts Symphony's stored units to EDM's QM9 units (eV -> Hartree
+# for gap; identity otherwise).
+SYMPHONY_NORM = {
+    'alpha': {'mean': 72.9519, 'std': 9.0731, 'unit_factor': 1.0},
+    'gap':   {'mean': 6.8997323607, 'std': 1.2955285899, 'unit_factor': 0.0367493},
+    'relative_atomic_energy': {'mean': 0.0, 'std': 0.060994, 'unit_factor': 1.0},
+}
+
+_TENSOR_RE = re.compile(r'tensor\(\[\[(.*?)\]\]\)')
+
+
+def _parse_symphony_conditioning_line(line):
+    """Extract the list of floats from a Symphony xyz comment line of the form
+    `# Conditioning <...>: tensor([[v0, v1, ...]])`. Returns None if the line
+    has no tensor literal."""
+    m = _TENSOR_RE.search(line)
+    if m is None:
+        return None
+    return [float(x) for x in m.group(1).split(',')]
 
 
 def get_classifier(dir_path='', device='cpu'):
@@ -65,7 +90,8 @@ def get_dataloader(args_gen):
 
 class XYZDataloader:
     def __init__(self, args_gen, xyz_dir, device, unknown_labels=False,
-                 batch_size=1, iterations=200, prop_dist=None, xyz_properties=None):
+                 batch_size=1, iterations=200, prop_dist=None,
+                 target_property=None, cond_keys=None):
         """
         Dataloader for XYZ files that follows the same API as DiffusionDataloader.
 
@@ -75,15 +101,19 @@ class XYZDataloader:
             batch_size: Batch size
             iterations: Number of iterations before raising StopIteration
             xyz_dir: Directory containing XYZ files to load
-            xyz_properties: ordered list of property names stored as tokens on the
-                XYZ comment line.  If None, falls back to prop_dist.properties.
+            target_property: name of the property to extract from each xyz file
+                and expose as `data[target_property]`. Defaults to
+                `prop_dist.properties[0]`.
+            cond_keys: ordered list of property names matching the elements of
+                the Symphony conditioning tensor in the xyz comment line. Used
+                to pick `target_property` out of multi-element conditioning
+                tensors. Defaults to `[target_property]` (single-element).
         """
         self.batch_size = batch_size
         self.iterations = iterations
         self.device = device
         self.unknown_labels = unknown_labels
         self.prop_dist = prop_dist
-        self.xyz_properties = xyz_properties  # what's actually in the file (may be a superset)
         self.dataset_info = get_dataset_info(args_gen.dataset, args_gen.remove_h)
 
         # XYZ specific parameters
@@ -91,6 +121,17 @@ class XYZDataloader:
         self.xyz_files = self._get_xyz_files()
         self.current_idx = 0
         self.i = 0
+
+        if target_property is None:
+            target_property = (prop_dist.properties[0]
+                               if prop_dist is not None and hasattr(prop_dist, 'properties')
+                               else 'dummy_property')
+        self.target_property = target_property
+        self.cond_keys = list(cond_keys) if cond_keys else [target_property]
+        if self.target_property not in self.cond_keys:
+            raise ValueError(
+                f"target_property {self.target_property!r} not in cond_keys "
+                f"{self.cond_keys!r}")
     
     
     def _get_xyz_files(self):
@@ -155,35 +196,42 @@ class XYZDataloader:
         padded_one_hot = torch.zeros((self.dataset_info['max_n_nodes'], len(self.dataset_info['atom_types'])))
         padded_one_hot[:n_nodes] = one_hot
         
+        # Property value lives on line 2 of the xyz file as a Symphony
+        # conditioning comment, e.g.
+        #   # Conditioning <...>: tensor([[v0, v1, ...]])
+        target_key = self.target_property
+        prop_value = None
+        with open(xyz_file, 'r') as f:
+            lines = f.readlines()
+        if len(lines) > 1 and lines[1].strip():
+            vals = _parse_symphony_conditioning_line(lines[1])
+            if vals is not None:
+                if len(vals) != len(self.cond_keys):
+                    raise ValueError(
+                        f"{xyz_file}: tensor has {len(vals)} elements but "
+                        f"cond_keys has {len(self.cond_keys)} ({self.cond_keys})")
+                prop_value = vals[self.cond_keys.index(target_key)]
+            else:
+                # legacy fallback: last token is just a float
+                prop_value = float(lines[1].split()[-1])
+        if prop_value is None and self.prop_dist is not None:
+            prop_value = self.prop_dist.normalizer[target_key]['mean']
+        if prop_value is None:
+            prop_value = 0.0
+
+        if target_key in SYMPHONY_NORM:
+            norm = SYMPHONY_NORM[target_key]
+            prop_value = (prop_value * norm['std'] + norm['mean']) * norm.get('unit_factor', 1.0)
+        prop_value = torch.tensor(prop_value, dtype=torch.float32)
+
         data = {
             'positions': padded_positions,
             'one_hot': padded_one_hot,
             'node_mask': node_mask,
             'n_nodes': n_nodes,
+            'filename': os.path.basename(xyz_file),
+            target_key: prop_value,
         }
-
-        # Read property values from the comment line (line 2) of the XYZ file.
-        # Tokens are matched by name using xyz_properties (the ordered list of what
-        # is actually stored in the file).  Only the properties needed by prop_dist
-        # are kept; missing ones fall back to their mean.
-        if self.prop_dist is not None:
-            needed = self.prop_dist.properties if hasattr(self.prop_dist, 'properties') else []
-            file_props = self.xyz_properties if self.xyz_properties is not None else needed
-            with open(xyz_file, 'r') as f:
-                lines = f.readlines()
-            tokens = lines[1].split() if len(lines) > 1 else []
-            token_map = {prop: tokens[i] for i, prop in enumerate(file_props) if i < len(tokens)}
-
-            for prop_key in needed:
-                if prop_key in token_map:
-                    raw = token_map[prop_key]
-                    if "tensor" in raw:
-                        prop_value = eval(raw).squeeze().item()
-                    else:
-                        prop_value = float(raw)
-                else:  # not present in file — fall back to mean
-                    prop_value = float(self.prop_dist.normalizer[prop_key]['mean'])
-                data[prop_key] = torch.tensor(prop_value, dtype=torch.float32)
         return data
     
     def _collate_batch(self, batch_data):
@@ -199,16 +247,16 @@ class XYZDataloader:
         one_hot = torch.zeros((batch_size, max_n_nodes, len(self.dataset_info['atom_types'])))
         node_mask = torch.zeros((batch_size, max_n_nodes), dtype=torch.bool)
         
-        properties = self.prop_dist.properties if (self.prop_dist is not None and hasattr(self.prop_dist, 'properties')) else []
-        prop_values = {prop_key: torch.zeros((batch_size, 1), dtype=torch.float32) for prop_key in properties}
+        # Get property key
+        prop_key = self.target_property
+        prop_values = torch.zeros((batch_size, 1), dtype=torch.float32)
 
         # Fill tensors
         for i, data in enumerate(batch_data):
             positions[i, :data['n_nodes']] = data['positions'][:data['n_nodes']]
             one_hot[i, :data['n_nodes']] = data['one_hot'][:data['n_nodes']]
             node_mask[i] = data['node_mask']
-            for prop_key in properties:
-                prop_values[prop_key][i] = data[prop_key]
+            prop_values[i] = data[prop_key]
         
         # Create edge mask
         bs, n_nodes = node_mask.size()
@@ -223,9 +271,9 @@ class XYZDataloader:
             'atom_mask': node_mask.to(self.device),
             'edge_mask': edge_mask.to(self.device),
             'one_hot': one_hot.to(self.device),
+            'filenames': [d['filename'] for d in batch_data],
+            prop_key: prop_values.to(self.device)
         }
-        for prop_key in properties:
-            data[prop_key] = prop_values[prop_key].to(self.device)
         return data
     
     def __iter__(self):
@@ -335,6 +383,45 @@ class DiffusionDataloader:
                 sample["positions"], dataset_info, i * self.batch_size, name='conditional', node_mask=sample["atom_mask"])
 
 
+@torch.no_grad()
+def collect_predictions(classifier, loader, mean, mad, property, device):
+    """Run the classifier over `loader` and return per-sample predictions.
+
+    Returns dict with keys 'filenames', 'targets', 'preds', and 'loss'
+    (all denormalized into the original property units)."""
+    classifier.eval()
+    filenames, targets, preds = [], [], []
+    total_loss = 0.0
+    total_count = 0
+    for data in loader:
+        batch_size, n_nodes, _ = data['positions'].size()
+        atom_positions = data['positions'].view(batch_size * n_nodes, -1).to(device, torch.float32)
+        atom_mask = data['atom_mask'].view(batch_size * n_nodes, -1).to(device, torch.float32)
+        edge_mask = data['edge_mask'].view(batch_size * n_nodes * n_nodes, 1).to(device, torch.float32)
+        nodes = data['one_hot'].to(device, torch.float32).view(batch_size * n_nodes, -1)
+        edges = prop_utils.get_adj_matrix(n_nodes, batch_size, device)
+        label = data[property].to(device, torch.float32)
+
+        pred = classifier(h0=nodes, x=atom_positions, edges=edges, edge_attr=None,
+                          node_mask=atom_mask, edge_mask=edge_mask, n_nodes=n_nodes)
+        pred_denorm = mad * pred + mean
+
+        total_loss += torch.nn.functional.l1_loss(pred_denorm, label.view_as(pred_denorm),
+                                                  reduction='sum').item()
+        total_count += pred_denorm.numel()
+
+        filenames.extend(data.get('filenames', [''] * batch_size))
+        targets.extend(label.view(-1).cpu().tolist())
+        preds.extend(pred_denorm.view(-1).cpu().tolist())
+
+    return {
+        'filenames': filenames,
+        'targets': targets,
+        'preds': preds,
+        'loss': total_loss / max(total_count, 1),
+    }
+
+
 def main_quantitative(args):
     # Get classifier
     #if args.task == "numnodes":
@@ -361,6 +448,22 @@ def main_quantitative(args):
 
     # Create a dataloader with the generator
 
+    # The classifier's target property may differ from the generator's
+    # conditioning (e.g. evaluating a relative_atomic_energy classifier on
+    # samples from a gap-conditioned generator). Compute mean/mad for it on
+    # the same split the classifier was trained on. For relative_atomic_energy
+    # we fit Symphony's per-element linear baseline on train and apply it to
+    # all splits as a precomputed column.
+    from qm9 import utils as qm9_utils
+    if args.property == 'relative_atomic_energy':
+        relenergy_weights = qm9_utils.fit_relenergy_baseline(dataloaders['train'].dataset)
+        for split in ('train', 'valid', 'test'):
+            if split in dataloaders:
+                qm9_utils.add_relative_atomic_energy(dataloaders[split].dataset, relenergy_weights)
+    if args.property not in property_norms:
+        extra = compute_mean_mad(dataloaders, [args.property], args_gen.dataset)
+        property_norms[args.property] = extra[args.property]
+
     mean, mad = property_norms[args.property]['mean'], property_norms[args.property]['mad']
 
     if args.task == 'edm':
@@ -373,12 +476,25 @@ def main_quantitative(args):
         print("Saving samples")
         diffusion_dataloader.save_samples(dataset_info)
     elif args.task == 'xyz':
-        xyz_dataloader = XYZDataloader(
-            args_gen=args_gen, xyz_dir=args.xyz_dir, device=args.device, batch_size=args.batch_size,
-            iterations=args.iterations, prop_dist=prop_dist, xyz_properties=args.xyz_properties)
-        print(f"XYZ: We evaluate the classifier on {len(xyz_dataloader.xyz_files)} generated samples")
-        loss = test(classifier, 0, xyz_dataloader, mean, mad, args.property, args.device, 1, args.debug_break)
-        print("Loss classifier on Generated samples: %.4f" % loss)
+        xyz_dirs = args.xyz_dir if isinstance(args.xyz_dir, list) else [args.xyz_dir]
+        for xyz_dir in xyz_dirs:
+            print(f"=== XYZ dir: {xyz_dir} ===")
+            xyz_dataloader = XYZDataloader(
+                args_gen=args_gen, xyz_dir=xyz_dir, device=args.device,
+                batch_size=args.batch_size, iterations=args.iterations,
+                prop_dist=prop_dist, target_property=args.property,
+                cond_keys=(args.cond_keys or [args.property]))
+            print(f"XYZ: We evaluate the classifier on {len(xyz_dataloader.xyz_files)} generated samples")
+            results = collect_predictions(classifier, xyz_dataloader, mean, mad, args.property, args.device)
+            print("Loss classifier on Generated samples: %.4f" % results['loss'])
+
+            csv_path = os.path.join(xyz_dir, f'predictions_{args.property}.csv')
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['filename', 'target', 'pred'])
+                for fn, tgt, pred in zip(results['filenames'], results['targets'], results['preds']):
+                    writer.writerow([fn, tgt, pred])
+            print(f"Saved predictions to {csv_path}")
     elif args.task == 'qm9_second_half':
         print("qm9_second_half: We evaluate the classifier on QM9")
         loss = test(classifier, 0, dataloaders['train'], mean, mad, args.property, args.device, args.log_interval,
@@ -511,15 +627,14 @@ if __name__ == "__main__":
     parser.add_argument('--context', type=float, default=None,
                         help='value of property to condition on')
     parser.add_argument(
-        "--xyz_dir", type=str, default='',
-        help="Directory containing XYZ files."
+        "--xyz_dir", type=str, nargs='+', default=[],
+        help="One or more directories containing XYZ files."
     )
     parser.add_argument(
-        "--xyz_properties", type=str, nargs='+', default=None,
-        help="Ordered list of property names stored as tokens on the XYZ comment line "
-             "(e.g. --xyz_properties gap relative_atomic_energy). "
-             "Only needed when the file contains different or more properties than the "
-             "generator was conditioned on. Defaults to the generator's conditioning properties."
+        "--cond_keys", type=str, nargs='+', default=None,
+        help=("Order of property names matching elements of the Symphony "
+              "conditioning tensor in xyz files (e.g. 'gap "
+              "relative_atomic_energy'). Defaults to [--property].")
     )
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()

@@ -1,4 +1,32 @@
+import numpy as np
 import torch
+
+
+def fit_relenergy_baseline(dataset):
+    """Fit a per-element linear regression for U0/N from atomic composition
+    over the QM9 atom_encoder order [H, C, N, O, F]. Returns regression
+    weights of shape [num_element_types]. This matches Symphony's
+    RelativeAtomicEnergyConditioner."""
+    one_hot = dataset.data['one_hot'].float()                 # [N, max_atoms, K]
+    num_atoms = dataset.data['num_atoms'].float()             # [N]
+    U0 = dataset.data['U0'].float()                           # [N]
+    composition = one_hot.sum(dim=1) / num_atoms.unsqueeze(1) # [N, K] fractions
+    energy_per_atom = U0 / num_atoms                          # [N]
+    weights, _, _, _ = np.linalg.lstsq(
+        composition.numpy(), energy_per_atom.numpy(), rcond=None)
+    return torch.tensor(weights, dtype=torch.float32)
+
+
+def add_relative_atomic_energy(dataset, regression_weights):
+    """Adds dataset.data['relative_atomic_energy'] = U0/N - composition @ weights.
+    Idempotent — overwrites any existing column. Uses Symphony's residual
+    definition; weights should be those returned by fit_relenergy_baseline."""
+    one_hot = dataset.data['one_hot'].float()
+    num_atoms = dataset.data['num_atoms'].float()
+    U0 = dataset.data['U0'].float()
+    composition = one_hot.sum(dim=1) / num_atoms.unsqueeze(1)
+    baseline = composition @ regression_weights
+    dataset.data['relative_atomic_energy'] = (U0 / num_atoms - baseline)
 
 
 def compute_mean_mad(dataloaders, properties, dataset_name):
