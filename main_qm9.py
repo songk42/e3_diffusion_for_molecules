@@ -3,7 +3,10 @@ try:
     from rdkit import Chem
 except ModuleNotFoundError:
     pass
+import os
 import copy
+import glob
+import re
 import utils
 import argparse
 import wandb
@@ -97,7 +100,9 @@ parser.add_argument('--data_augmentation', type=eval, default=False, help='use a
 parser.add_argument("--conditioning", nargs='+', default=[],
                     help='arguments : homo | lumo | alpha | gap | mu | Cv' )
 parser.add_argument('--resume', type=str, default=None,
-                    help='')
+                    help='Path to checkpoint directory to resume from, or "latest" to auto-resume from the most recent epoch checkpoint in outputs/exp_name')
+parser.add_argument('--checkpoint_interval', type=int, default=0,
+                    help='Save checkpoint every N epochs. 0 to disable. (default: 0)')
 parser.add_argument('--start_epoch', type=int, default=0,
                     help='')
 parser.add_argument('--ema_decay', type=float, default=0.999,
@@ -133,18 +138,36 @@ args.cuda = not args.no_cuda and torch.cuda.is_available()
 device = torch.device("cuda" if args.cuda else "cpu")
 dtype = torch.float32
 
+if args.resume == 'latest':
+    exp_dir = 'outputs/%s' % args.exp_name
+    ckpts = [p for p in glob.glob(exp_dir + '/generative_model_*.npy')
+             if re.search(r'generative_model_(\d+)\.npy', p)]
+    if ckpts:
+        latest = max(ckpts, key=lambda p: int(re.search(r'generative_model_(\d+)\.npy', p).group(1)))
+        epoch_num = int(re.search(r'generative_model_(\d+)\.npy', latest).group(1))
+        args.resume = exp_dir
+        args.start_epoch = epoch_num + 1
+        args.resume_epoch = epoch_num
+        print("Resuming from epoch %d checkpoint" % epoch_num)
+    else:
+        print("No epoch checkpoints found in %s, starting from scratch" % exp_dir)
+        args.resume = None
+
 if args.resume is not None:
     exp_name = args.exp_name + '_resume'
     start_epoch = args.start_epoch
     resume = args.resume
+    resume_epoch = getattr(args, 'resume_epoch', None)
     wandb_usr = args.wandb_usr
     normalization_factor = args.normalization_factor
     aggregation_method = args.aggregation_method
 
-    with open(join(args.resume, 'args.pickle'), 'rb') as f:
+    pickle_file = join(resume, 'args_%d.pickle' % resume_epoch) if resume_epoch is not None else join(resume, 'args.pickle')
+    with open(pickle_file, 'rb') as f:
         args = pickle.load(f)
 
     args.resume = resume
+    args.resume_epoch = resume_epoch
     args.break_train_epoch = False
 
     args.exp_name = exp_name
@@ -166,6 +189,7 @@ utils.create_folders(args)
 # Wandb config
 if args.no_wandb:
     mode = 'disabled'
+    os.environ['WANDB_MODE'] = 'disabled'
 else:
     mode = 'online' if args.online else 'offline'
 kwargs = {'entity': args.wandb_usr, 'name': args.exp_name, 'project': 'e3_diffusion', 'config': args,
@@ -213,8 +237,13 @@ def check_mask_correct(variables, node_mask):
 
 def main():
     if args.resume is not None:
-        flow_state_dict = torch.load(join(args.resume, 'flow.npy'))
-        optim_state_dict = torch.load(join(args.resume, 'optim.npy'))
+        resume_epoch = getattr(args, 'resume_epoch', None)
+        if resume_epoch is not None:
+            flow_state_dict = torch.load(join(args.resume, 'generative_model_%d.npy' % resume_epoch))
+            optim_state_dict = torch.load(join(args.resume, 'optim_%d.npy' % resume_epoch))
+        else:
+            flow_state_dict = torch.load(join(args.resume, 'flow.npy'))
+            optim_state_dict = torch.load(join(args.resume, 'optim.npy'))
         model.load_state_dict(flow_state_dict)
         optim.load_state_dict(optim_state_dict)
 
@@ -290,11 +319,19 @@ def main():
             wandb.log({"Test loss ": nll_test}, commit=True)
             wandb.log({"Best cross-validated test loss ": best_nll_test}, commit=True)
         if epoch % args.generation_epochs == 0:
-            analyze_and_save(args=args, epoch=epoch, 
+            analyze_and_save(args=args, epoch=epoch,
                             model_sample=utils.load_model(gen_model, 'outputs/%s/generative_model_ema.npy' % args.exp_name),
                             nodes_dist=nodes_dist, dataset_info=dataset_info, device=device,
                             prop_dist=prop_dist, n_samples=10000, batch_size=500,
                             save_to_ase=True)
+
+        if args.save_model and args.checkpoint_interval > 0 and epoch % args.checkpoint_interval == 0:
+            utils.save_model(optim, 'outputs/%s/optim_%d.npy' % (args.exp_name, epoch))
+            utils.save_model(model, 'outputs/%s/generative_model_%d.npy' % (args.exp_name, epoch))
+            if args.ema_decay > 0:
+                utils.save_model(model_ema, 'outputs/%s/generative_model_ema_%d.npy' % (args.exp_name, epoch))
+            with open('outputs/%s/args_%d.pickle' % (args.exp_name, epoch), 'wb') as f:
+                pickle.dump(args, f)
 
 
 if __name__ == "__main__":

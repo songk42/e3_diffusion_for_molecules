@@ -94,6 +94,7 @@ def get_adj_matrix(n_nodes, batch_size, device):
         return get_adj_matrix(n_nodes, batch_size, device)
 
     edges = [torch.LongTensor(rows).to(device), torch.LongTensor(cols).to(device)]
+    edges_dic[n_nodes][batch_size] = edges
     return edges
 
 def preprocess_input(one_hot, charges, charge_power, charge_scale, device):

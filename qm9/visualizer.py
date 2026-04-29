@@ -326,6 +326,8 @@ def visualize_chain(path, dataset_info, wandb=None, spheres_3d=False,
                     mode="chain"):
     files = load_xyz_files(path)
     files = sorted(files)
+    if len(files) == 0:
+        return
     save_paths = []
 
     for i in range(len(files)):

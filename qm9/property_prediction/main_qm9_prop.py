@@ -1,4 +1,4 @@
-import sys, os
+import sys, os, glob, re
 sys.path.append(os.path.abspath(os.path.join('../../')))
 from qm9.property_prediction.models_property import EGNN, Naive, NumNodes
 import torch
@@ -13,7 +13,7 @@ import wandb
 loss_l1 = nn.L1Loss()
 
 
-def train(model, epoch, loader, mean, mad, property, device, partition='train', optimizer=None, lr_scheduler=None, log_interval=20, debug_break=False):
+def train(model, epoch, loader, mean, mad, property, device, partition='train', optimizer=None, lr_scheduler=None, log_interval=20, debug_break=False, scaler=None):
     if partition == 'train':
         lr_scheduler.step()
     res = {'loss': 0, 'counter': 0, 'loss_arr':[]}
@@ -21,7 +21,6 @@ def train(model, epoch, loader, mean, mad, property, device, partition='train', 
         if partition == 'train':
             model.train()
             optimizer.zero_grad()
-
         else:
             model.eval()
 
@@ -30,56 +29,23 @@ def train(model, epoch, loader, mean, mad, property, device, partition='train', 
         atom_mask = data['atom_mask'].view(batch_size * n_nodes, -1).to(device, torch.float32)
         edge_mask = data['edge_mask'].view(batch_size * n_nodes * n_nodes, 1).to(device, torch.float32)
         nodes = data['one_hot'].to(device, torch.float32)
-        #charges = data['charges'].to(device, dtype).squeeze(2)
-        #nodes = prop_utils.preprocess_input(one_hot, charges, args.charge_power, charge_scale, device)
 
         nodes = nodes.view(batch_size * n_nodes, -1)
-        # nodes = torch.cat([one_hot, charges], dim=1)
         edges = prop_utils.get_adj_matrix(n_nodes, batch_size, device)
         label = data[property].to(device, torch.float32)
-        print("# of mols:", len(label))
-
-        '''
-        print("Positions mean")
-        print(torch.mean(torch.abs(atom_positions)))
-        print("Positions max")
-        print(torch.max(atom_positions))
-        print("Positions min")
-        print(torch.min(atom_positions))
-
-
-        print("\nOne hot mean")
-        print(torch.mean(torch.abs(nodes)))
-        print("one_hot max")
-        print(torch.max(nodes))
-        print("one_hot min")
-        print(torch.min(nodes))
-
-
-        print("\nLabel mean")
-        print(torch.mean(torch.abs(label)))
-        print("label max")
-        print(torch.max(label))
-        print("label min")
-        print(torch.min(label))
-        '''
-
-        pred = model(h0=nodes, x=atom_positions, edges=edges, edge_attr=None, node_mask=atom_mask, edge_mask=edge_mask,
-                     n_nodes=n_nodes)
-
-
-        # print("\nPred mean")
-        # print(torch.mean(torch.abs(pred)))
-        # print("Pred max")
-        # print(torch.max(pred))
-        # print("Pred min")
-        # print(torch.min(pred))
 
         if partition == 'train':
-            loss = loss_l1(pred, (label - mean) / mad)
-            loss.backward()
-            optimizer.step()
+            with torch.cuda.amp.autocast():
+                pred = model(h0=nodes, x=atom_positions, edges=edges, edge_attr=None, node_mask=atom_mask, edge_mask=edge_mask,
+                             n_nodes=n_nodes)
+                loss = loss_l1(pred, (label - mean) / mad)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
         else:
+            with torch.cuda.amp.autocast():
+                pred = model(h0=nodes, x=atom_positions, edges=edges, edge_attr=None, node_mask=atom_mask, edge_mask=edge_mask,
+                             n_nodes=n_nodes)
             loss = loss_l1(mad * pred + mean, label)
 
         res['loss'] += loss.item() * batch_size
@@ -97,8 +63,8 @@ def train(model, epoch, loader, mean, mad, property, device, partition='train', 
     return res['loss'] / res['counter']
 
 
-def test(model, epoch, loader, mean, mad, property, device, log_interval, debug_break=False):
-    return train(model, epoch, loader, mean, mad, property, device, partition='test', log_interval=log_interval, debug_break=debug_break)
+def test(model, epoch, loader, mean, mad, property, device, log_interval, debug_break=False, scaler=None):
+    return train(model, epoch, loader, mean, mad, property, device, partition='test', log_interval=log_interval, debug_break=debug_break, scaler=scaler)
 
 
 def get_model(args):
@@ -169,6 +135,8 @@ if __name__ == "__main__":
     parser.add_argument('--save_model', type=eval, default=True)
     parser.add_argument('--checkpoint_interval', type=int, default=0,
                         help='Save checkpoint every N epochs. 0 to disable. (default: 0)')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Path to checkpoint file to resume training from, or "latest" to auto-resume from the most recent checkpoint in outf/exp_name')
 
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -202,18 +170,35 @@ if __name__ == "__main__":
     property_norms = utils.compute_mean_mad_from_dataloader(dataloaders['valid'], [args.property])
     mean, mad = property_norms[args.property]['mean'], property_norms[args.property]['mad']
 
+    start_epoch = 0
+    if args.resume == 'latest':
+        exp_dir = args.outf + "/" + args.exp_name
+        ckpts = glob.glob(exp_dir + "/checkpoint_epoch_*.npy")
+        if ckpts:
+            args.resume = max(ckpts, key=lambda p: int(re.search(r'checkpoint_epoch_(\d+)', p).group(1)))
+            start_epoch = int(re.search(r'checkpoint_epoch_(\d+)', args.resume).group(1))
+            print("Resuming from checkpoint", args.resume)
+        else:
+            print("No epoch checkpoints found in %s, starting from scratch" % exp_dir)
+            args.resume = None
+
     model = get_model(args)
+
+    if args.resume is not None:
+        model.load_state_dict(torch.load(args.resume, map_location=device))
+        print("Loaded checkpoint from %s" % args.resume)
 
     print(model)
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs)
+    scaler = torch.cuda.amp.GradScaler(enabled=args.cuda)
 
-    for epoch in range(0, args.epochs):
-        train_loss = train(model, epoch, dataloaders['train'], mean, mad, args.property, device, partition='train', optimizer=optimizer, lr_scheduler=lr_scheduler, log_interval=args.log_interval)
+    for epoch in range(start_epoch, args.epochs):
+        train_loss = train(model, epoch, dataloaders['train'], mean, mad, args.property, device, partition='train', optimizer=optimizer, lr_scheduler=lr_scheduler, log_interval=args.log_interval, scaler=scaler)
         if epoch % args.test_interval == 0:
-            val_loss = train(model, epoch, dataloaders['valid'], mean, mad, args.property, device, partition='valid', optimizer=optimizer, lr_scheduler=lr_scheduler, log_interval=args.log_interval)
-            test_loss = test(model, epoch, dataloaders['test'], mean, mad, args.property, device, log_interval=args.log_interval)
+            val_loss = train(model, epoch, dataloaders['valid'], mean, mad, args.property, device, partition='valid', optimizer=optimizer, lr_scheduler=lr_scheduler, log_interval=args.log_interval, scaler=scaler)
+            test_loss = test(model, epoch, dataloaders['test'], mean, mad, args.property, device, log_interval=args.log_interval, scaler=scaler)
             res['epochs'].append(epoch)
             res['losess'].append(test_loss)
 
