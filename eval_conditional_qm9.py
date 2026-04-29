@@ -65,22 +65,25 @@ def get_dataloader(args_gen):
 
 class XYZDataloader:
     def __init__(self, args_gen, xyz_dir, device, unknown_labels=False,
-                 batch_size=1, iterations=200, prop_dist=None):
+                 batch_size=1, iterations=200, prop_dist=None, xyz_properties=None):
         """
         Dataloader for XYZ files that follows the same API as DiffusionDataloader.
-        
+
         Args:
             device: Device to load data on
             unknown_labels: Whether labels are unknown (kept for API consistency)
             batch_size: Batch size
             iterations: Number of iterations before raising StopIteration
             xyz_dir: Directory containing XYZ files to load
+            xyz_properties: ordered list of property names stored as tokens on the
+                XYZ comment line.  If None, falls back to prop_dist.properties.
         """
         self.batch_size = batch_size
         self.iterations = iterations
         self.device = device
         self.unknown_labels = unknown_labels
         self.prop_dist = prop_dist
+        self.xyz_properties = xyz_properties  # what's actually in the file (may be a superset)
         self.dataset_info = get_dataset_info(args_gen.dataset, args_gen.remove_h)
 
         # XYZ specific parameters
@@ -152,32 +155,35 @@ class XYZDataloader:
         padded_one_hot = torch.zeros((self.dataset_info['max_n_nodes'], len(self.dataset_info['atom_types'])))
         padded_one_hot[:n_nodes] = one_hot
         
-        # Create dummy property value (could be extracted from filename or XYZ comment line)
-        if self.prop_dist is not None:
-            prop_key = self.prop_dist.properties[0] if hasattr(self.prop_dist, 'properties') else 'dummy_property'
-            # Prop value is on the second line of the XYZ file
-            with open(xyz_file, 'r') as f:
-                lines = f.readlines()
-                if len(lines) > 1:
-                    if lines[1].split():
-                        prop_value = lines[1].split()[-1]
-                    else:  # blank line; default to mean value
-                        prop_value = str(self.prop_dist.normalizer[prop_key]['mean'])
-                    if "tensor" in prop_value:
-                        prop_value = eval(prop_value).squeeze().item()
-                    else:
-                        prop_value = float(prop_value)
-                else:
-                    prop_value = 0.0
-            prop_value = torch.tensor(prop_value, dtype=torch.float32)
-     
         data = {
             'positions': padded_positions,
             'one_hot': padded_one_hot,
             'node_mask': node_mask,
             'n_nodes': n_nodes,
-            prop_key: prop_value
         }
+
+        # Read property values from the comment line (line 2) of the XYZ file.
+        # Tokens are matched by name using xyz_properties (the ordered list of what
+        # is actually stored in the file).  Only the properties needed by prop_dist
+        # are kept; missing ones fall back to their mean.
+        if self.prop_dist is not None:
+            needed = self.prop_dist.properties if hasattr(self.prop_dist, 'properties') else []
+            file_props = self.xyz_properties if self.xyz_properties is not None else needed
+            with open(xyz_file, 'r') as f:
+                lines = f.readlines()
+            tokens = lines[1].split() if len(lines) > 1 else []
+            token_map = {prop: tokens[i] for i, prop in enumerate(file_props) if i < len(tokens)}
+
+            for prop_key in needed:
+                if prop_key in token_map:
+                    raw = token_map[prop_key]
+                    if "tensor" in raw:
+                        prop_value = eval(raw).squeeze().item()
+                    else:
+                        prop_value = float(raw)
+                else:  # not present in file — fall back to mean
+                    prop_value = float(self.prop_dist.normalizer[prop_key]['mean'])
+                data[prop_key] = torch.tensor(prop_value, dtype=torch.float32)
         return data
     
     def _collate_batch(self, batch_data):
@@ -193,16 +199,16 @@ class XYZDataloader:
         one_hot = torch.zeros((batch_size, max_n_nodes, len(self.dataset_info['atom_types'])))
         node_mask = torch.zeros((batch_size, max_n_nodes), dtype=torch.bool)
         
-        # Get property key
-        prop_key = self.prop_dist.properties[0] if hasattr(self.prop_dist, 'properties') else 'dummy_property'
-        prop_values = torch.zeros((batch_size, 1), dtype=torch.float32)
-        
+        properties = self.prop_dist.properties if (self.prop_dist is not None and hasattr(self.prop_dist, 'properties')) else []
+        prop_values = {prop_key: torch.zeros((batch_size, 1), dtype=torch.float32) for prop_key in properties}
+
         # Fill tensors
         for i, data in enumerate(batch_data):
             positions[i, :data['n_nodes']] = data['positions'][:data['n_nodes']]
             one_hot[i, :data['n_nodes']] = data['one_hot'][:data['n_nodes']]
             node_mask[i] = data['node_mask']
-            prop_values[i] = data[prop_key]
+            for prop_key in properties:
+                prop_values[prop_key][i] = data[prop_key]
         
         # Create edge mask
         bs, n_nodes = node_mask.size()
@@ -217,8 +223,9 @@ class XYZDataloader:
             'atom_mask': node_mask.to(self.device),
             'edge_mask': edge_mask.to(self.device),
             'one_hot': one_hot.to(self.device),
-            prop_key: prop_values.to(self.device)
         }
+        for prop_key in properties:
+            data[prop_key] = prop_values[prop_key].to(self.device)
         return data
     
     def __iter__(self):
@@ -367,7 +374,8 @@ def main_quantitative(args):
         diffusion_dataloader.save_samples(dataset_info)
     elif args.task == 'xyz':
         xyz_dataloader = XYZDataloader(
-            args_gen=args_gen, xyz_dir=args.xyz_dir, device=args.device, batch_size=args.batch_size, iterations=args.iterations, prop_dist=prop_dist)
+            args_gen=args_gen, xyz_dir=args.xyz_dir, device=args.device, batch_size=args.batch_size,
+            iterations=args.iterations, prop_dist=prop_dist, xyz_properties=args.xyz_properties)
         print(f"XYZ: We evaluate the classifier on {len(xyz_dataloader.xyz_files)} generated samples")
         loss = test(classifier, 0, xyz_dataloader, mean, mad, args.property, args.device, 1, args.debug_break)
         print("Loss classifier on Generated samples: %.4f" % loss)
@@ -505,6 +513,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--xyz_dir", type=str, default='',
         help="Directory containing XYZ files."
+    )
+    parser.add_argument(
+        "--xyz_properties", type=str, nargs='+', default=None,
+        help="Ordered list of property names stored as tokens on the XYZ comment line "
+             "(e.g. --xyz_properties gap relative_atomic_energy). "
+             "Only needed when the file contains different or more properties than the "
+             "generator was conditioned on. Defaults to the generator's conditioning properties."
     )
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
