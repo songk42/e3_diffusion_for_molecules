@@ -18,4 +18,5 @@ conda activate edm
 
 cd qm9/property_prediction
 
-WANDB_MODE=offline python main_qm9_prop.py --num_workers 2 --lr 5e-4 --property relative_atomic_energy --exp_name exp_class_relenergy --model_name egnn --checkpoint_interval 10  --resume latest
+WANDB_MODE=offline python main_qm9_prop.py --num_workers 2 --lr 5e-4 --property mu --exp_name exp_class_mu --model_name egnn --checkpoint_interval 10  --resume latest
+

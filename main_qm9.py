@@ -58,7 +58,7 @@ parser.add_argument('--clip_grad', type=eval, default=True,
 parser.add_argument('--trace', type=str, default='hutch',
                     help='hutch | exact')
 parser.add_argument('--generation_epochs', type=int, default=25,
-                    help='Generate every n epochs')
+                    help='Generate every n epochs. Set to 0 to disable saving.')
 # EGNN args -->
 parser.add_argument('--n_layers', type=int, default=6,
                     help='number of layers')
@@ -154,7 +154,7 @@ if args.resume == 'latest':
         args.resume = None
 
 if args.resume is not None:
-    exp_name = args.exp_name + '_resume'
+    exp_name = args.exp_name
     start_epoch = args.start_epoch
     resume = args.resume
     resume_epoch = getattr(args, 'resume_epoch', None)
@@ -318,7 +318,7 @@ def main():
             wandb.log({"Val loss ": nll_val}, commit=True)
             wandb.log({"Test loss ": nll_test}, commit=True)
             wandb.log({"Best cross-validated test loss ": best_nll_test}, commit=True)
-        if epoch % args.generation_epochs == 0:
+        if args.generation_epochs > 0 and epoch % args.generation_epochs == 0:
             analyze_and_save(args=args, epoch=epoch,
                             model_sample=utils.load_model(gen_model, 'outputs/%s/generative_model_ema.npy' % args.exp_name),
                             nodes_dist=nodes_dist, dataset_info=dataset_info, device=device,
